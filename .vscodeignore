@@ -1,0 +1,15 @@
+node_modules/**
+test/**
+scripts/**
+.test-output/**
+.vscode/**
+.gitignore
+.vscodeignore
+package-lock.json
+*.vsix
+output/**
+.playwright-cli/**
+.github/**
+VERIFICATION.md
+CONTRIBUTING.md
+media/icon.svg

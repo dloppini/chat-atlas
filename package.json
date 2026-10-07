@@ -1,0 +1,98 @@
+{
+  "name": "chat-atlas",
+  "displayName": "Chat Atlas",
+  "description": "A steady, local topic board for Codex and Claude Code conversations.",
+  "version": "0.1.1",
+  "publisher": "local-tools",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dloppini/chat-atlas.git"
+  },
+  "homepage": "https://github.com/dloppini/chat-atlas#readme",
+  "bugs": {
+    "url": "https://github.com/dloppini/chat-atlas/issues"
+  },
+  "keywords": ["codex", "claude", "conversations", "kanban", "topics", "local"],
+  "galleryBanner": { "color": "#171922", "theme": "dark" },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./src/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onCommand:chatAtlas.open"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "chatAtlas.open",
+        "title": "Chat Atlas: Open Board",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "chatAtlas.refresh",
+        "title": "Chat Atlas: Refresh Conversations"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "chatAtlas.open",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
+      }
+    ],
+    "configuration": {
+      "title": "Chat Atlas",
+      "properties": {
+        "chatAtlas.codexHome": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Codex data folder. Empty uses CODEX_HOME or ~/.codex."
+        },
+        "chatAtlas.claudeHome": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Claude Code data folder. Empty uses CLAUDE_CONFIG_DIR or ~/.claude."
+        },
+        "chatAtlas.maxSessions": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 50,
+          "maximum": 10000,
+          "description": "Maximum recent local conversations to index per provider."
+        },
+        "chatAtlas.refreshSeconds": {
+          "type": "number",
+          "default": 20,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Refresh interval while the board is open."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/core.test.js",
+    "check": "node --check src/extension.js && node --check src/core.js && node --check src/providers.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js",
+    "package": "vsce package",
+    "preview": "node scripts/preview.js"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^4.0.0"
+  }
+}

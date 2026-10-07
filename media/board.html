@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src 'nonce-{{nonce}}'; img-src {{cspSource}} data:;">
+<title>Chat Atlas</title><link rel="icon" type="image/png" href="{{iconUri}}"><link rel="stylesheet" href="{{styleUri}}"></head>
+<body>
+<div class="app">
+  <aside id="project-sidebar" class="rail" aria-label="Projects">
+    <div class="brand"><img class="brand-icon" src="{{iconUri}}" width="34" height="34" alt=""><span>Chat Atlas<small>YOUR CONVERSATION WORKSPACE</small></span></div>
+    <button class="nav active" id="all-projects">All projects <span id="total">0</span></button>
+    <p class="eyebrow">PROJECTS</p><div id="projects"></div>
+    <div class="rail-bottom"><span class="local-dot"></span> Local on this computer<button id="settings" title="Data source settings" aria-label="Data source settings">⚙</button></div>
+  </aside>
+  <main>
+    <header><div class="heading-group"><button id="sidebar-toggle" class="quiet" type="button" title="Hide project sidebar" aria-label="Hide project sidebar" aria-controls="project-sidebar" aria-expanded="true">☰</button><div><p class="eyebrow">A LITTLE ORDER. MORE FOCUS.</p><h1 id="heading">All conversations</h1><p class="subtitle" id="summary">Connecting your local conversations…</p></div></div><button id="refresh" class="quiet">↻ Refresh</button></header>
+    <section id="sources" class="sources" aria-label="Connected sources"></section>
+    <section id="focus-strip" class="focus-strip" aria-label="Pinned conversations" hidden></section>
+    <div class="toolbar"><div class="segments" aria-label="Board view"><button data-view="topics" class="active">Topics</button><button data-view="workflow">Workflow</button><button data-view="timeline">Timeline</button></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a conversation…" aria-label="Search conversations"><kbd>/</kbd></label><button id="new-topic" class="quiet">+ Topic</button></div>
+    <div class="filterbar"><div class="provider-filters" aria-label="Provider filter"><button data-provider="all" class="active">All</button><button data-provider="codex">Codex</button><button data-provider="claude">Claude Code</button></div><label class="done-filter"><input id="show-done" type="checkbox"> Show done <span id="done-count">0</span></label><span id="order-label">Created newest first · cards stay put</span></div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="errors" class="errors" role="status"></div>
+    <section id="board" class="board" aria-label="Conversations"></section>
+    <footer><span id="visible-count"></span><span>Drag cards to organize · Tick to finish · Click to resume</span></footer>
+  </main>
+  <aside id="detail" class="detail" aria-label="Conversation details" hidden></aside>
+</div>
+<dialog id="topic-dialog"><form id="topic-form"><div class="dialog-head"><h2>New topic</h2><button type="button" id="cancel-topic" aria-label="Close">×</button></div><label>Topic name<input id="topic-name" required maxlength="50" placeholder="e.g. Performance engineer"></label><label>Auto-group keywords<input id="topic-keywords" maxlength="300" placeholder="telemetry engineer performance"></label><p>New conversations matching these words land here. Existing cards stay where you left them.</p><button class="primary" type="submit">Create topic</button></form></dialog>
+<script nonce="{{nonce}}" src="{{projectsUri}}"></script><script nonce="{{nonce}}" src="{{scriptUri}}"></script></body></html>
