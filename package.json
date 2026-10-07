@@ -1,26 +1,28 @@
 {
   "name": "chat-atlas",
   "displayName": "Chat Atlas",
-  "description": "A steady, local topic board for Codex and Claude Code conversations.",
-  "version": "0.1.4",
+  "description": "Organize local coding conversations by project, topic, and status in a visual board.",
+  "version": "0.1.5",
   "publisher": "LPX",
-  "license": "MIT",
+  "author": { "name": "LPX" },
+  "license": "SEE LICENSE IN LICENSE",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/dloppini/chat-atlas.git"
   },
-  "homepage": "https://github.com/dloppini/chat-atlas#readme",
+  "homepage": "https://github.com/dloppini/chat-atlas/blob/main/README.md",
   "bugs": {
     "url": "https://github.com/dloppini/chat-atlas/issues"
   },
-  "keywords": ["codex", "claude", "conversations", "kanban", "topics", "local"],
+  "qna": "https://github.com/dloppini/chat-atlas/issues",
+  "keywords": ["codex", "claude-code", "conversations", "kanban", "topics"],
   "galleryBanner": { "color": "#171922", "theme": "dark" },
   "engines": {
     "vscode": "^1.96.0"
   },
   "categories": [
-    "Other"
+    "Visualization"
   ],
   "main": "./src/extension.js",
   "extensionKind": [

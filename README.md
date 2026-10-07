@@ -6,10 +6,10 @@ A local VS Code extension that gives Codex and Claude Code conversations a stabl
 
 ## Start
 
-Download **chat-atlas-0.1.4.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
+Download **chat-atlas-0.1.5.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
 
 ```powershell
-code --install-extension ./chat-atlas-0.1.4.vsix
+code --install-extension ./chat-atlas-0.1.5.vsix
 ```
 
 Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar.
@@ -44,9 +44,7 @@ Requires VS Code 1.96 or newer and local conversation history from Codex or Clau
 | Codex | `CODEX_HOME/sessions`, otherwise `~/.codex/sessions`; titles from `session_index.jsonl` | Installed `openai.chatgpt` sidebar via session URI; optional editor beside board; CLI fallback |
 | Claude Code | `CLAUDE_CONFIG_DIR/projects`, otherwise `~/.claude/projects` | Installed `anthropic.claude-code` sidebar; existing editor session reused when already open; CLI fallback |
 
-Claude native routing was inspected in Anthropic's published extension `2.1.289`: the sidebar command selects its location, then the editor command receives the session ID and `honor-preferred-location`. Without that extension/command pair, the fallback runs `claude --resume <session-id>` in a VS Code terminal, requiring the CLI to be installed and signed in. The parser and routing are fixture-tested; live Claude integration has not been verified for this release.
-
-Codex session routing was inspected in the installed extension `26.930.51102` (`/local/<id>` and `openai-codex://route/local/<id>`). These routes are implementation details, not a stable public API. A future provider update may require an adapter change. The exact native resume flow still needs a live user check; the board and extension activation are tested separately.
+Chat Atlas opens an existing conversation through its installed provider extension when available, with a terminal fallback that requires the corresponding CLI to be installed and signed in. Provider integration can change with provider updates. The native resume flows have not been verified live for this release; parser and routing checks use fixtures. See [integration notes](https://github.com/dloppini/chat-atlas/blob/main/CONTRIBUTING.md#provider-integration-notes) for the tested versions and routing details.
 
 Only local history is indexed. Cloud-only chats, Codex archived sessions, Claude subagent transcripts, and remote hosts are not discovered automatically. Local source folders can be changed in **Settings → Chat Atlas**. The extension runs on the local UI host in SSH/WSL windows; explicitly point it at an accessible history folder when needed.
 
@@ -58,21 +56,7 @@ The default limit is 1,000 recent transcript files per provider, configurable up
 
 ## Development
 
-Requires Node.js 22 or newer. Clone the repository, then run:
-
-```powershell
-cd chat-atlas
-npm.cmd ci
-npm.cmd run check
-npm.cmd test
-npm.cmd run package
-```
-
-Open the folder in VS Code and press **F5** to run an Extension Development Host. No compilation step is needed. To view the same UI with fictional chats in a browser, run `npm.cmd run preview` and open `http://127.0.0.1:4317`. Preview state is separate from extension state and never reads your real conversations.
-
-Architecture: `src/core.js` contains the bounded history readers, classifiers and stable metadata reconciliation; `src/extension.js` owns VS Code integration and storage; `media/` is the CSP-protected webview. The webview renders conversation content with `textContent`, and only validated UUIDs enter resume commands.
-
-Integration references: [Codex IDE commands](https://developers.openai.com/codex/ide/commands), [Claude CLI resume](https://code.claude.com/docs/en/cli-reference), [VS Code webviews](https://code.visualstudio.com/api/extension-guides/webview).
+See [Contributing](https://github.com/dloppini/chat-atlas/blob/main/CONTRIBUTING.md) for development setup, the fictional-data preview, architecture, and provider integration notes.
 
 ## Community
 

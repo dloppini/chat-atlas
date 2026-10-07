@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5 — 8 October 2026
+
+- Clarify the extension description, publisher attribution, license, category, and support links.
+- Keep Marketplace documentation focused on using the board, with development and integration details in the contributor guide.
+
 ## 0.1.4 — 7 October 2026
 
 - Prepare Chat Atlas for Marketplace publishing under LPX.
