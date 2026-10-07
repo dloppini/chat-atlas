@@ -1,8 +1,8 @@
 {
-  "name": "chat-atlas",
-  "displayName": "Chat Atlas - Local Conversation Board",
-  "description": "Organize local coding conversations by project, topic, and status in a visual board.",
-  "version": "0.1.6",
+  "name": "lpx-conversation-board",
+  "displayName": "Chat Atlas by LPX",
+  "description": "A local conversation organizer with project filters, topic boards, workflow status, and a timeline.",
+  "version": "0.1.7",
   "publisher": "lpx",
   "author": { "name": "LPX" },
   "license": "SEE LICENSE IN LICENSE.txt",
@@ -15,9 +15,7 @@
   "bugs": {
     "url": "https://github.com/dloppini/chat-atlas/issues"
   },
-  "qna": "https://github.com/dloppini/chat-atlas/issues",
-  "keywords": ["conversation-board", "project-organizer", "kanban", "workflow", "local-history"],
-  "galleryBanner": { "color": "#171922", "theme": "dark" },
+  "keywords": ["conversation-organizer", "project-board", "workflow", "timeline"],
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -90,8 +88,8 @@
   },
   "scripts": {
     "test": "node --test test/core.test.js",
-    "check": "node --check src/extension.js && node --check src/core.js && node --check src/providers.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js",
-    "package": "vsce package",
+    "check": "node --check src/extension.js && node --check src/core.js && node --check src/providers.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js && node --check scripts/package.js",
+    "package": "node scripts/package.js",
     "preview": "node scripts/preview.js"
   },
   "devDependencies": {

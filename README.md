@@ -1,18 +1,20 @@
-# Chat Atlas
+# Chat Atlas by LPX
 
 A local VS Code extension that gives Codex and Claude Code conversations a stable home. Topics stay visible, cards keep their position when messages arrive, and a Done checkbox separates finished tasks from active work.
 
 ## Start
 
-Download **chat-atlas-0.1.6.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
+Install [Chat Atlas by LPX](https://marketplace.visualstudio.com/items?itemName=LPX.lpx-conversation-board) from the VS Code Marketplace, or run:
 
 ```powershell
-code --install-extension ./chat-atlas-0.1.6.vsix
+code --install-extension LPX.lpx-conversation-board
 ```
 
 Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar.
 
-The LPX package uses extension ID `lpx.chat-atlas`. Earlier local previews used `local-tools.chat-atlas`, a separate extension identity with separate organization metadata. When switching, disable the old preview to avoid duplicate commands. Existing transcripts are unaffected.
+The published extension ID is `LPX.lpx-conversation-board`. Earlier packages used `local-tools.chat-atlas` or `lpx.chat-atlas`, separate extension identities with separate organization metadata. When switching, disable earlier installations to avoid duplicate commands. Existing transcripts are unaffected.
+
+An offline installer, **chat-atlas-0.1.7.vsix**, is also available from the [latest GitHub release](https://github.com/dloppini/chat-atlas/releases/latest). Use **Extensions → … → Install from VSIX…** to install it.
 
 ![Chat Atlas topic board with fictional Codex and Claude Code conversations](https://raw.githubusercontent.com/dloppini/chat-atlas/v0.1.6/media/board-preview.png)
 

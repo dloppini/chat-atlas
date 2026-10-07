@@ -8,7 +8,9 @@ For an issue, include your VS Code version, operating system, Chat Atlas version
 
 Use Node.js 22 or newer. Clone the repository, run `npm ci`, then `npm run check` and `npm test`. On Windows PowerShell use `npm.cmd` if script execution is restricted. Press **F5** in VS Code to open an Extension Development Host.
 
-`npm run preview` serves fictional chats at `http://127.0.0.1:4317`. It does not read your conversation history. `npm run package` builds an installable VSIX.
+`npm run preview` serves fictional chats at `http://127.0.0.1:4317`. It does not read your conversation history. `npm run package` builds an installable VSIX using the Marketplace staging workflow in `scripts/package.js`.
+
+The published extension identity is `LPX.lpx-conversation-board`. Keep that identity for updates. The packager copies only runtime assets, removes development-only manifest fields, and uses the plain listing documents in `marketplace/`. The previous `chat-atlas` identifier was repeatedly rejected by Marketplace; the new identity and simplified package were accepted together. The exact server-side trigger was not identified, so do not assume that any single removed field caused it. Keep screenshots and detailed documentation in the repository README unless a future Marketplace update is validated explicitly.
 
 Keep both providers supported, preserve stable ordering and reversible completion, and never modify provider transcripts. Native provider routes can change: keep routing changes in `src/providers.js` and describe which provider version you checked. Add focused tests when changing parsing, persistence, or resume behavior.
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7 — 8 October 2026
+
+- Publish Chat Atlas by LPX as `LPX.lpx-conversation-board` in the VS Code Marketplace.
+- Retain the complete conversation board and both provider integrations.
+- Use the accepted plain listing and minimal package metadata for future builds.
+
 ## 0.1.6 — 8 October 2026
 
 - Give the extension listing the descriptive name Chat Atlas - Local Conversation Board.
