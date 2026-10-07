@@ -49,7 +49,8 @@ function activate(context) {
       if (m.type === 'sidebarPreferences') {
         const p = m.preferences || {};
         const keys = value => Array.isArray(value) ? [...new Set(value.filter(key => typeof key === 'string' && key.length <= 4096).slice(0, 20000))] : [];
-        sidebarPreferences = { projectSort: p.projectSort === 'manual' ? 'manual' : 'alphabetical', projectOrder: keys(p.projectOrder), hiddenProjects: keys(p.hiddenProjects) };
+        const sidebarWidth = typeof p.sidebarWidth === 'number' && Number.isFinite(p.sidebarWidth) ? Math.round(Math.max(180, Math.min(520, p.sidebarWidth))) : null;
+        sidebarPreferences = { projectSort: p.projectSort === 'manual' ? 'manual' : 'alphabetical', projectOrder: keys(p.projectOrder), hiddenProjects: keys(p.hiddenProjects), sidebarWidth };
         const snapshot = structuredClone(sidebarPreferences);
         writeQueue = writeQueue.then(() => context.globalState.update('sidebarPreferences', snapshot));
         await writeQueue; return;

@@ -7,6 +7,8 @@ let view = saved.view || 'topics', project = saved.project || '', provider = sav
 let detailKey = '', excerpts = [], sampled = false, noticeTimer;
 let focusedGroup = saved.focusedGroup || '';
 let sidebarHidden = saved.sidebarHidden === true;
+let sidebarWidth = typeof saved.sidebarWidth === 'number' && Number.isFinite(saved.sidebarWidth) ? saved.sidebarWidth : null;
+let sidebarDrag = null;
 let projectSort = saved.projectSort === 'manual' ? 'manual' : 'alphabetical';
 let projectOrder = Array.isArray(saved.projectOrder) ? saved.projectOrder : [];
 let hiddenProjects = Array.isArray(saved.hiddenProjects) ? saved.hiddenProjects : [];
@@ -14,8 +16,27 @@ let sidebarPreferencesLoaded = false;
 const columnScroll = new Map();
 const $ = id => document.getElementById(id);
 const send = message => host.postMessage(message);
-const persist = () => host.setState({ view, project, provider, query, showDone, selected, focusedGroup, sidebarHidden, projectSort, projectOrder, hiddenProjects });
-const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects } }); };
+const persist = () => host.setState({ view, project, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects });
+const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects, sidebarWidth } }); };
+function sidebarBounds() { return { min: 180, max: Math.max(180, Math.min(520, window.innerWidth - 480)) }; }
+function applySidebarWidth() {
+  const { min, max } = sidebarBounds();
+  if (sidebarWidth === null) document.documentElement.style.removeProperty('--sidebar-width');
+  else document.documentElement.style.setProperty('--sidebar-width', `${Math.round(Math.max(min, Math.min(max, sidebarWidth)))}px`);
+  const resizer = $('sidebar-resizer');
+  const width = Math.round($('project-sidebar').getBoundingClientRect().width || (window.innerWidth <= 1100 ? 180 : 222));
+  resizer.setAttribute('aria-valuemin', String(min)); resizer.setAttribute('aria-valuemax', String(max));
+  resizer.setAttribute('aria-valuenow', String(width)); resizer.setAttribute('aria-valuetext', `${width} pixels`);
+}
+function setSidebarWidth(width) { const { min, max } = sidebarBounds(); sidebarWidth = Math.round(Math.max(min, Math.min(max, width))); applySidebarWidth(); }
+function finishSidebarResize(cancel = false) {
+  if (!sidebarDrag) return;
+  const drag = sidebarDrag; sidebarDrag = null;
+  if (cancel) { sidebarWidth = drag.preferredWidth; applySidebarWidth(); }
+  else persistSidebar();
+  document.body.classList.remove('sidebar-resizing');
+  if ($('sidebar-resizer').hasPointerCapture(drag.pointerId)) $('sidebar-resizer').releasePointerCapture(drag.pointerId);
+}
 function el(tag, className, text) { const n = document.createElement(tag); if (className) n.className = className; if (text !== undefined) n.textContent = text; return n; }
 function button(text, className, fn, title) { const b = el('button', className, text); b.type = 'button'; b.addEventListener('click', fn); if (title) { b.title = title; b.setAttribute('aria-label', title); } return b; }
 function shortDate(ms) { return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
@@ -85,6 +106,7 @@ function render() {
   const focusKey = activeEl?.closest('.card')?.dataset.key, focusAction = activeEl?.dataset.action;
   const focusColumn = activeEl?.classList.contains('column-focus') ? activeEl.closest('.column').dataset.group : '';
   $('project-sidebar').hidden = sidebarHidden;
+  applySidebarWidth();
   const sidebarLabel = sidebarHidden ? 'Show project sidebar' : 'Hide project sidebar';
   $('sidebar-toggle').title = sidebarLabel;
   $('sidebar-toggle').setAttribute('aria-label', sidebarLabel);
@@ -212,6 +234,7 @@ window.addEventListener('message', e => {
       projectSort = m.sidebarPreferences.projectSort === 'manual' ? 'manual' : 'alphabetical';
       projectOrder = m.sidebarPreferences.projectOrder || [];
       hiddenProjects = m.sidebarPreferences.hiddenProjects || [];
+      sidebarWidth = typeof m.sidebarPreferences.sidebarWidth === 'number' && Number.isFinite(m.sidebarPreferences.sidebarWidth) ? m.sidebarPreferences.sidebarWidth : null;
       sidebarPreferencesLoaded = true; persist();
     }
     data = m; render();
@@ -229,6 +252,28 @@ $('sidebar-toggle').addEventListener('click', () => { sidebarHidden = !sidebarHi
 $('project-sort').addEventListener('change', e => { projectSort = e.target.value; persistSidebar(); render(); });
 $('hidden-projects').addEventListener('click', () => $('hidden-projects-dialog').showModal());
 $('close-hidden-projects').addEventListener('click', () => $('hidden-projects-dialog').close());
+const sidebarResizer = $('sidebar-resizer');
+sidebarResizer.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || sidebarDrag) return;
+  e.preventDefault(); sidebarResizer.focus();
+  sidebarDrag = { pointerId: e.pointerId, x: e.clientX, width: $('project-sidebar').getBoundingClientRect().width, preferredWidth: sidebarWidth };
+  sidebarResizer.setPointerCapture(e.pointerId); document.body.classList.add('sidebar-resizing');
+});
+sidebarResizer.addEventListener('pointermove', e => { if (sidebarDrag?.pointerId === e.pointerId) setSidebarWidth(sidebarDrag.width + e.clientX - sidebarDrag.x); });
+sidebarResizer.addEventListener('pointerup', e => { if (sidebarDrag?.pointerId === e.pointerId) finishSidebarResize(); });
+sidebarResizer.addEventListener('pointercancel', () => finishSidebarResize(true));
+sidebarResizer.addEventListener('lostpointercapture', () => finishSidebarResize());
+sidebarResizer.addEventListener('dblclick', () => { sidebarWidth = null; applySidebarWidth(); persistSidebar(); });
+sidebarResizer.addEventListener('keydown', e => {
+  const { min, max } = sidebarBounds(), width = $('project-sidebar').getBoundingClientRect().width;
+  if (e.key === 'Escape' && sidebarDrag) { e.preventDefault(); e.stopPropagation(); finishSidebarResize(true); return; }
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(e.key)) return;
+  e.preventDefault();
+  if (e.key === 'Enter') { sidebarWidth = null; applySidebarWidth(); }
+  else setSidebarWidth(e.key === 'Home' ? min : e.key === 'End' ? max : width + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 32 : 16));
+  persistSidebar();
+});
+window.addEventListener('resize', applySidebarWidth);
 document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { if (view !== b.dataset.view) focusedGroup = ''; view = b.dataset.view; persist(); render(); }));
 document.querySelectorAll('[data-provider]').forEach(b => b.addEventListener('click', () => { provider = b.dataset.provider; persist(); render(); }));
 $('new-topic').addEventListener('click', () => $('topic-dialog').showModal());

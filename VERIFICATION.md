@@ -1,5 +1,13 @@
 # Verification — 6 October 2026
 
+## Resizable sidebar — 7 October 2026
+
+- Added a pointer- and keyboard-accessible separator at the sidebar's right edge. Width is saved with the existing sidebar preferences; double-click or Enter restores the default, and Escape cancels a drag.
+- Sidebar width stays within 180–520 px and leaves room for the board. Conversation columns adapt to their container rather than only the window width.
+- All 15 Node tests and JavaScript checks passed. Browser demo checks passed for native pointer dragging, bounds, arrow/Home/End controls, cancellation, reset, hide/show, retained manual order, and restored width after discarding the prior webview state.
+- Checked 1440, 1200, 1100, 800, 681, and 390 px window widths without page-level horizontal overflow. The sidebar remains hidden on narrow layouts and restores its preferred width when the window grows.
+- Screenshots contain fictional conversations. Persistence was checked through the shared preview's durable preference store; a live VS Code restart was not exercised.
+
 ## Sidebar management — 7 October 2026
 
 - Added reversible project hiding, a Hidden projects restore dialog, alphabetical sorting, and manual ordering with native drag/drop and keyboard-accessible up/down controls.

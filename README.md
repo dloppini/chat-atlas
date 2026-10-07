@@ -6,10 +6,10 @@ A local VS Code extension that gives Codex and Claude Code conversations a stabl
 
 ## Start
 
-Download **chat-atlas-0.1.2.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
+Download **chat-atlas-0.1.3.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
 
 ```powershell
-code --install-extension ./chat-atlas-0.1.2.vsix
+code --install-extension ./chat-atlas-0.1.3.vsix
 ```
 
 Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar.
@@ -29,6 +29,7 @@ Requires VS Code 1.96 or newer and local conversation history from Codex or Clau
 - Drag cards between topics or workflow columns. Manual topic choices are retained. Existing cards are not automatically reclassified after a new topic is created.
 - Pin important chats with the star. Their shortcuts remain visible above the board.
 - Use the sidebar toggle beside the page heading to hide or show the project list and give the board more space. Your choice is remembered when you reopen the board. Narrow layouts continue to hide the sidebar automatically.
+- Drag the sidebar's right edge to resize it. Its width is saved across board reopenings and VS Code restarts. Focus the edge and use the arrow keys to adjust it, or double-click it (or press Enter) to restore the default width. The board adapts to the available space.
 - Cards preview the latest conversation message, skipping internal context metadata. Handoff notes remain available in Details.
 - Filter by project/provider or search titles, latest message previews, topics, projects, and notes. Press **/** to focus search. **Escape** closes details.
 - Equivalent Windows path spellings share one project entry. Different folders with the same project name stay separate and show their paths below the name. Hover an entry to see its full folder path.

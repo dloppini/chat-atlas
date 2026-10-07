@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 — 7 October 2026
+
+- Resize the project sidebar by dragging its right edge or using the arrow keys, and retain its width when reopening the board.
+- Double-click the edge or press Enter to restore the default width.
+- Keep the conversation board responsive as the sidebar grows or the window narrows.
+
 ## 0.1.2 — 7 October 2026
 
 - Remove projects from the sidebar and restore them through Hidden projects.
