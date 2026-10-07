@@ -1,11 +1,11 @@
 {
   "name": "chat-atlas",
-  "displayName": "Chat Atlas",
+  "displayName": "Chat Atlas - Local Conversation Board",
   "description": "Organize local coding conversations by project, topic, and status in a visual board.",
-  "version": "0.1.5",
-  "publisher": "LPX",
+  "version": "0.1.6",
+  "publisher": "lpx",
   "author": { "name": "LPX" },
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "SEE LICENSE IN LICENSE.txt",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
@@ -16,7 +16,7 @@
     "url": "https://github.com/dloppini/chat-atlas/issues"
   },
   "qna": "https://github.com/dloppini/chat-atlas/issues",
-  "keywords": ["codex", "claude-code", "conversations", "kanban", "topics"],
+  "keywords": ["conversation-board", "project-organizer", "kanban", "workflow", "local-history"],
   "galleryBanner": { "color": "#171922", "theme": "dark" },
   "engines": {
     "vscode": "^1.96.0"

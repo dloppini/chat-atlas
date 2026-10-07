@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.6 — 8 October 2026
+
+- Give the extension listing the descriptive name Chat Atlas - Local Conversation Board.
+- Align the publisher identifier with the publisher dashboard and the license reference with its packaged filename.
+- Use descriptive board keywords and a direct, versioned screenshot URL.
+- Package only the listed runtime files, documentation, and PNG assets.
+
 ## 0.1.5 — 8 October 2026
 
 - Clarify the extension description, publisher attribution, license, category, and support links.
