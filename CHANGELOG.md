@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 — 7 October 2026
+
+- Remove projects from the sidebar and restore them through Hidden projects.
+- Choose alphabetical or manual project sorting. Drag projects or use the up/down controls to reorder them.
+- Remember hidden projects and manual order across board reopenings and VS Code restarts.
+
 ## 0.1.1 — 7 October 2026
 
 First community release of Chat Atlas.

@@ -1,5 +1,13 @@
 # Verification — 6 October 2026
 
+## Sidebar management — 7 October 2026
+
+- Added reversible project hiding, a Hidden projects restore dialog, alphabetical sorting, and manual ordering with native drag/drop and keyboard-accessible up/down controls.
+- Sidebar preferences are persisted separately in extension global state, allowing restoration after the webview is recreated.
+- All 15 Node tests and JavaScript checks passed. Browser demo checks passed for alphabetical/manual switching, retained manual order, arrow controls, native mouse drag/drop, hiding and restoring multiple projects, recovery after hiding the selected project, refresh persistence, recreation without the prior webview state, and no horizontal overflow at 390 px.
+- Verified that sidebar removal retains every original demo conversation. The screenshot was updated with fictional chats only.
+- These browser checks use the shared webview preview with a separate durable preference store; a live VS Code restart was not exercised for this change.
+
 ## Community release and project identities — 7 October 2026
 
 - Added the extension, editor-tab, and board icon; prepared public installation instructions, changelog, contribution guidance, and cross-platform packaging CI.

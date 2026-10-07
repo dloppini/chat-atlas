@@ -6,10 +6,10 @@ A local VS Code extension that gives Codex and Claude Code conversations a stabl
 
 ## Start
 
-Download **chat-atlas-0.1.1.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
+Download **chat-atlas-0.1.2.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
 
 ```powershell
-code --install-extension ./chat-atlas-0.1.1.vsix
+code --install-extension ./chat-atlas-0.1.2.vsix
 ```
 
 Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar.
@@ -32,6 +32,7 @@ Requires VS Code 1.96 or newer and local conversation history from Codex or Clau
 - Cards preview the latest conversation message, skipping internal context metadata. Handoff notes remain available in Details.
 - Filter by project/provider or search titles, latest message previews, topics, projects, and notes. Press **/** to focus search. **Escape** closes details.
 - Equivalent Windows path spellings share one project entry. Different folders with the same project name stay separate and show their paths below the name. Hover an entry to see its full folder path.
+- Use **×** beside a project to remove its sidebar entry. Its chats remain in **All projects**; use **Hidden projects** to restore it. Choose **A–Z** or **Manual** beside **PROJECTS**. In Manual mode, drag projects or use their up/down buttons. Your manual order is retained when switching to alphabetical sorting, and sidebar preferences survive reopening the board and restarting VS Code.
 
 ## Provider integration
 

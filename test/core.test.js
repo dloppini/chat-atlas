@@ -6,12 +6,26 @@ const os = require('node:os');
 const path = require('node:path');
 const { classify, parseSession, reconcile, SessionIndex, sample, publicSessions } = require('../src/core');
 const { openNativeSession } = require('../src/providers');
-const { canonicalProjectPath, projectGroupKey, groupProjects, resolveProjectSelection } = require('../media/projects');
+const { canonicalProjectPath, projectGroupKey, groupProjects, resolveProjectSelection, orderedProjects, moveProject } = require('../media/projects');
 const id = '12345678-1234-1234-1234-123456789abc';
 const meta = { type: 'session_meta', payload: { id, cwd: 'C:/Code/example', timestamp: '2026-10-01T12:00:00Z' } };
 const prompt = text => ({ type: 'response_item', timestamp: '2026-10-01T12:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
 const answer = text => ({ ...prompt(text), payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] } });
 const stat = { birthtimeMs: 1, mtimeMs: 1791000000000, size: 1000 };
+test('Manual project sorting survives alphabetical mode and appends new projects without losing saved order', () => {
+  const groups = groupProjects([{ project: 'Zulu', cwd: '/z' }, { project: 'Alpha', cwd: '/a' }, { project: 'Beta', cwd: '/b' }]);
+  const keys = (mode, order) => orderedProjects(groups, mode, order).map(([key]) => key);
+  const order = ['path:/z', 'path:/a'];
+  assert.deepEqual(keys('manual', order), ['path:/z', 'path:/a', 'path:/b']);
+  assert.deepEqual(keys('alphabetical', order), ['path:/a', 'path:/b', 'path:/z']);
+  assert.deepEqual(order, ['path:/z', 'path:/a']);
+  const moved = moveProject(keys('manual', order), 'path:/b', 'path:/z');
+  assert.deepEqual(moved, ['path:/b', 'path:/z', 'path:/a']);
+  assert.deepEqual(moveProject(moved, 'path:/b', 'path:/a', true), ['path:/z', 'path:/a', 'path:/b']);
+  assert.deepEqual(moveProject(moved, 'missing', 'path:/a'), moved);
+  assert.deepEqual(moveProject(moved, 'path:/b', 'path:/b'), moved);
+  assert.deepEqual(keys('manual', JSON.parse(JSON.stringify(moved))), moved);
+});
 test('Sidebar combines equivalent Windows paths and distinguishes folders with matching names', () => {
   const sessions = [
     { project: 'Example', cwd: 'C:\\Code\\Example' },

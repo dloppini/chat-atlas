@@ -34,4 +34,16 @@ function resolveProjectSelection(selection, sessions, groups) {
   const match = sessions.find(s => s.cwd && canonicalProjectPath(s.cwd) === canonicalProjectPath(selection));
   return match ? projectGroupKey(match) : selection;
 }
-if (typeof module !== 'undefined') module.exports = { canonicalProjectPath, projectGroupKey, groupProjects, resolveProjectSelection };
+function orderedProjects(groups, mode, order = []) {
+  const alphabetical = [...groups].sort((a, b) => a[1].name.localeCompare(b[1].name) || a[0].localeCompare(b[0]));
+  if (mode !== 'manual') return alphabetical;
+  const positions = new Map(order.map((key, index) => [key, index]));
+  return alphabetical.sort((a, b) => (positions.get(a[0]) ?? Infinity) - (positions.get(b[0]) ?? Infinity));
+}
+function moveProject(order, source, target, after = false) {
+  if (source === target || !order.includes(source) || !order.includes(target)) return [...order];
+  const next = order.filter(key => key !== source);
+  next.splice(next.indexOf(target) + (after ? 1 : 0), 0, source);
+  return next;
+}
+if (typeof module !== 'undefined') module.exports = { canonicalProjectPath, projectGroupKey, groupProjects, resolveProjectSelection, orderedProjects, moveProject };

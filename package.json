@@ -2,7 +2,7 @@
   "name": "chat-atlas",
   "displayName": "Chat Atlas",
   "description": "A steady, local topic board for Codex and Claude Code conversations.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "local-tools",
   "license": "MIT",
   "icon": "media/icon.png",

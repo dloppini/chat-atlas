@@ -7,7 +7,8 @@
   <aside id="project-sidebar" class="rail" aria-label="Projects">
     <div class="brand"><img class="brand-icon" src="{{iconUri}}" width="34" height="34" alt=""><span>Chat Atlas<small>YOUR CONVERSATION WORKSPACE</small></span></div>
     <button class="nav active" id="all-projects">All projects <span id="total">0</span></button>
-    <p class="eyebrow">PROJECTS</p><div id="projects"></div>
+    <div class="project-heading"><p class="eyebrow">PROJECTS</p><select id="project-sort" aria-label="Project sort order"><option value="alphabetical">A–Z</option><option value="manual">Manual</option></select></div><div id="projects"></div>
+    <button id="hidden-projects" class="hidden-projects" type="button" hidden>Hidden projects</button>
     <div class="rail-bottom"><span class="local-dot"></span> Local on this computer<button id="settings" title="Data source settings" aria-label="Data source settings">⚙</button></div>
   </aside>
   <main>
@@ -24,4 +25,5 @@
   <aside id="detail" class="detail" aria-label="Conversation details" hidden></aside>
 </div>
 <dialog id="topic-dialog"><form id="topic-form"><div class="dialog-head"><h2>New topic</h2><button type="button" id="cancel-topic" aria-label="Close">×</button></div><label>Topic name<input id="topic-name" required maxlength="50" placeholder="e.g. Performance engineer"></label><label>Auto-group keywords<input id="topic-keywords" maxlength="300" placeholder="telemetry engineer performance"></label><p>New conversations matching these words land here. Existing cards stay where you left them.</p><button class="primary" type="submit">Create topic</button></form></dialog>
+<dialog id="hidden-projects-dialog" aria-labelledby="hidden-projects-title"><div class="dialog-head"><h2 id="hidden-projects-title">Hidden projects</h2><button id="close-hidden-projects" type="button" aria-label="Close hidden projects">×</button></div><p>Hidden projects remain in All projects. Restore any entry to the sidebar.</p><div id="hidden-project-list"></div></dialog>
 <script nonce="{{nonce}}" src="{{projectsUri}}"></script><script nonce="{{nonce}}" src="{{scriptUri}}"></script></body></html>

@@ -10,6 +10,7 @@ const { openNativeSession } = require('./providers');
 function activate(context) {
   let panel, timer, current = { sessions: [], sources: [], errors: [] }, busy = false, disposed = false;
   let state = context.globalState.get('boardState', { topics: null, cards: {} });
+  let sidebarPreferences = context.globalState.get('sidebarPreferences', { projectSort: 'alphabetical', projectOrder: [], hiddenProjects: [] });
   const index = new SessionIndex();
   let writeQueue = Promise.resolve();
   const save = () => { const snapshot = structuredClone(state); writeQueue = writeQueue.then(() => context.globalState.update('boardState', snapshot)); return writeQueue; };
@@ -18,7 +19,7 @@ function activate(context) {
     const c = vscode.workspace.getConfiguration('chatAtlas');
     return { codexHome: c.get('codexHome') || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claudeHome: c.get('claudeHome') || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), maxSessions: c.get('maxSessions', 1000) };
   }
-  const publish = () => post({ type: 'data', ...current, sessions: publicSessions(current.sessions, state), topics: state.topics || [], busy });
+  const publish = () => post({ type: 'data', ...current, sessions: publicSessions(current.sessions, state), topics: state.topics || [], sidebarPreferences, busy });
   async function refresh() {
     if (busy || disposed) return;
     busy = true; publish();
@@ -45,6 +46,14 @@ function activate(context) {
       if (m.type === 'ready') { publish(); await refresh(); return; }
       if (m.type === 'refresh') { await refresh(); return; }
       if (m.type === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettings', 'chatAtlas'); return; }
+      if (m.type === 'sidebarPreferences') {
+        const p = m.preferences || {};
+        const keys = value => Array.isArray(value) ? [...new Set(value.filter(key => typeof key === 'string' && key.length <= 4096).slice(0, 20000))] : [];
+        sidebarPreferences = { projectSort: p.projectSort === 'manual' ? 'manual' : 'alphabetical', projectOrder: keys(p.projectOrder), hiddenProjects: keys(p.hiddenProjects) };
+        const snapshot = structuredClone(sidebarPreferences);
+        writeQueue = writeQueue.then(() => context.globalState.update('sidebarPreferences', snapshot));
+        await writeQueue; return;
+      }
       if (m.type === 'addTopic') {
         const name = typeof m.name === 'string' ? m.name.trim().slice(0, 50) : '';
         if (!name || state.topics.some(t => t.name.toLowerCase() === name.toLowerCase())) return;
