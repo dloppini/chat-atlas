@@ -1,5 +1,11 @@
 # Verification — 6 October 2026
 
+## LPX Marketplace package — 7 October 2026
+
+- Set the publisher to the user-provided `LPX` ID and incremented the package to 0.1.4. Documented the separate identity used by earlier local previews.
+- All 15 Node tests and JavaScript checks passed. The packaging validator accepts the publisher ID, and the VSIX manifest identifies LPX as its publisher.
+- Marketplace upload remains pending publisher dashboard access; no local publishing credential is configured.
+
 ## Resizable sidebar — 7 October 2026
 
 - Added a pointer- and keyboard-accessible separator at the sidebar's right edge. Width is saved with the existing sidebar preferences; double-click or Enter restores the default, and Escape cancels a drag.

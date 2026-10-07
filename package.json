@@ -2,8 +2,8 @@
   "name": "chat-atlas",
   "displayName": "Chat Atlas",
   "description": "A steady, local topic board for Codex and Claude Code conversations.",
-  "version": "0.1.3",
-  "publisher": "local-tools",
+  "version": "0.1.4",
+  "publisher": "LPX",
   "license": "MIT",
   "icon": "media/icon.png",
   "repository": {

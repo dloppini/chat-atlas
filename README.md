@@ -6,13 +6,15 @@ A local VS Code extension that gives Codex and Claude Code conversations a stabl
 
 ## Start
 
-Download **chat-atlas-0.1.3.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
+Download **chat-atlas-0.1.4.vsix** from the [latest release](https://github.com/dloppini/chat-atlas/releases/latest). In VS Code, open **Extensions**, choose **… → Install from VSIX…**, and select the downloaded file. Or run this command from your download folder:
 
 ```powershell
-code --install-extension ./chat-atlas-0.1.3.vsix
+code --install-extension ./chat-atlas-0.1.4.vsix
 ```
 
 Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar.
+
+The LPX package uses extension ID `LPX.chat-atlas`. Earlier local previews used `local-tools.chat-atlas`, a separate extension identity with separate organization metadata. When switching, disable the old preview to avoid duplicate commands. Existing transcripts are unaffected.
 
 ![Chat Atlas topic board with fictional Codex and Claude Code conversations](media/board-preview.png)
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 — 7 October 2026
+
+- Prepare Chat Atlas for Marketplace publishing under LPX.
+
 ## 0.1.3 — 7 October 2026
 
 - Resize the project sidebar by dragging its right edge or using the arrow keys, and retain its width when reopening the board.
