@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.10 — 9 October 2026
+
+- Open the board in Timeline view and show the current version beneath the sidebar title.
+- Keep new Codex and Claude Code chats in the current VS Code window, using its current workspace even when another Atlas project is selected.
+- Remove the project-window handoff and pending startup chat requests.
+
+## 0.1.9 — 9 October 2026
+
+- Detect running tasks from reasoning, tool activity, completion, and interruption records even when start markers are absent from transcript samples.
+- Update the running spinner and frame in place using file notifications and two-second activity checks; retain long-running tasks with a configurable 60-minute inactivity timeout.
+- Browse for an existing folder during project creation, or link one later from the project page.
+- Show the linked folder beneath the project title and keep conversation assignments and sidebar preferences when linking.
+- Open new project chats in the provider's native VS Code UI, with a project-window handoff when another folder is selected.
+
+## 0.1.8 — 9 October 2026
+
+- Keep terminal resume sessions hidden and make CLI resume an explicit action.
+- Add optional subfolder filters and editable project placement, with new projects that can link to an existing folder.
+- Show a running indicator and frame for recent unfinished turns.
+- Start new Codex or Claude Code chats in the provider's native VS Code UI, opening a project window when needed.
+- Order the board tabs as Timeline, Workflow, and Topics.
+
 ## 0.1.7 — 8 October 2026
 
 - Publish Chat Atlas by LPX as `LPX.lpx-conversation-board` in the VS Code Marketplace.

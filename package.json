@@ -2,9 +2,11 @@
   "name": "lpx-conversation-board",
   "displayName": "Chat Atlas by LPX",
   "description": "A local conversation organizer with project filters, topic boards, workflow status, and a timeline.",
-  "version": "0.1.7",
+  "version": "0.1.10",
   "publisher": "lpx",
-  "author": { "name": "LPX" },
+  "author": {
+    "name": "LPX"
+  },
   "license": "SEE LICENSE IN LICENSE.txt",
   "icon": "media/icon.png",
   "repository": {
@@ -15,7 +17,12 @@
   "bugs": {
     "url": "https://github.com/dloppini/chat-atlas/issues"
   },
-  "keywords": ["conversation-organizer", "project-board", "workflow", "timeline"],
+  "keywords": [
+    "conversation-organizer",
+    "project-board",
+    "workflow",
+    "timeline"
+  ],
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -82,12 +89,19 @@
           "minimum": 10,
           "maximum": 300,
           "description": "Refresh interval while the board is open."
+        },
+        "chatAtlas.runningTimeoutMinutes": {
+          "type": "number",
+          "default": 60,
+          "minimum": 5,
+          "maximum": 1440,
+          "description": "Hide the running indicator after this many minutes without task activity. Increase it for long tools or builds. Completion and interruption records stop the indicator immediately."
         }
       }
     }
   },
   "scripts": {
-    "test": "node --test test/core.test.js",
+    "test": "node --test test/*.test.js",
     "check": "node --check src/extension.js && node --check src/core.js && node --check src/providers.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js && node --check scripts/package.js",
     "package": "node scripts/package.js",
     "preview": "node scripts/preview.js"

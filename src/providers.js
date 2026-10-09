@@ -27,4 +27,22 @@ async function openNativeSession(vscode, session, editor = false) {
   }
   return false;
 }
-module.exports = { openNativeSession };
+async function newChatCommands(vscode, provider) {
+  const extension = vscode.extensions.getExtension(provider === 'codex' ? 'openai.chatgpt' : 'anthropic.claude-code');
+  const name = provider === 'codex' ? 'Codex' : 'Claude Code';
+  if (!extension) throw new Error(`Install the ${name} VS Code extension to start a chat in its UI.`);
+  await extension.activate();
+  const required = provider === 'codex' ? ['chatgpt.openSidebar', 'chatgpt.newChat'] : ['claude-vscode.editor.open'];
+  const available = await vscode.commands.getCommands(true);
+  if (!required.every(command => available.includes(command))) throw new Error(`The ${name} new-chat UI is unavailable. Update its VS Code extension and try again.`);
+  return required;
+}
+async function startNativeChat(vscode, provider) {
+  for (const command of await newChatCommands(vscode, provider)) await vscode.commands.executeCommand(command);
+}
+async function openNewProjectChat(vscode, provider, cwd) {
+  if (!['codex', 'claude'].includes(provider) || typeof cwd !== 'string' || !cwd) throw new Error('Invalid new-chat target.');
+  // New-chat commands use this window's workspace. Keep the user's current window.
+  await startNativeChat(vscode, provider);
+}
+module.exports = { openNativeSession, openNewProjectChat };

@@ -22,8 +22,10 @@ Contributions are licensed under the repository's MIT license.
 
 ## Provider integration notes
 
-Claude native routing was inspected in Anthropic's published extension `2.1.289`: the sidebar command selects its location, then the editor command receives the session ID and `honor-preferred-location`. Without that extension/command pair, the fallback runs `claude --resume <session-id>` in a VS Code terminal, requiring the CLI to be installed and signed in. The parser and routing are fixture-tested; live Claude integration has not been verified for this release.
+Claude native routing was inspected in Anthropic's published extension `2.1.289`: the sidebar command selects its location, then the editor command receives the session ID and `honor-preferred-location`. Without that extension/command pair, normal resume reports an error. The explicit terminal action runs `claude --resume <session-id>` in a hidden VS Code terminal, requiring the CLI to be installed and signed in. The parser and routing are fixture-tested; live Claude integration has not been verified for this release.
 
 Codex session routing was inspected in the installed extension `26.930.51102` (`/local/<id>` and `openai-codex://route/local/<id>`). These routes are implementation details, not a stable public API. A future provider update may require an adapter change. The exact native resume flow still needs a live user check; the board and extension activation are tested separately.
 
 Integration references: [Codex IDE commands](https://developers.openai.com/codex/ide/commands), [Claude CLI resume](https://code.claude.com/docs/en/cli-reference), [VS Code webviews](https://code.visualstudio.com/api/extension-guides/webview).
+
+New chats use Codex's documented `chatgpt.openSidebar` and `chatgpt.newChat` commands, or Claude's `claude-vscode.editor.open` command without a session ID. New-chat routing was inspected in installed Codex `26.51002.51308` and Claude Code `2.1.295`. These commands use the current window's workspace; they do not accept a project-folder argument. Chat Atlas always invokes them in the current window, including when another Atlas project is selected or no workspace folder is open. New chats never open a folder or fall back to a terminal. Routing is fixture-tested; a live UI check is still required.

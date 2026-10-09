@@ -14,6 +14,9 @@ Requires Visual Studio Code 1.96 or newer and local history from either supporte
 - Resize the project sidebar and focus individual board columns.
 - Pin conversations, add notes, and mark tasks Done. Completion can be reversed.
 - Preview the latest message and reopen conversations through an installed provider extension or its command-line tool.
+- Browse for an existing project folder during creation or link it later. The project page shows its linked path and retains assigned conversations.
+- See a running spinner and frame for unfinished tasks. Activity checks update every two seconds; completion and interruption stop the indicator when detected. The inactivity timeout is configurable.
+- Start new project chats in the provider's native UI in the current VS Code window, using its current workspace.
 
 ## Local data
 

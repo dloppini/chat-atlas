@@ -1,5 +1,32 @@
 # Verification — 6 October 2026
 
+## Timeline startup and sidebar version — 9 October 2026
+
+- The board starts in Timeline even when Topics or Workflow was saved previously. Focus from another view is discarded; project, search and sidebar preferences remain available.
+- Display the package version beneath Chat Atlas at the top of the project sidebar, using the same manifest value in VS Code and the demo preview.
+- A clean dependency install, all 42 Node tests and JavaScript checks passed. Browser preview checks passed for first open, reopening after Topics and Workflow, the visible sidebar version at 1440 and 800 pixels, spinner start/stop updates without replacing the card, and a 390-pixel layout without horizontal overflow. Screenshots use fictional conversations; live provider-to-webview behavior was not exercised.
+
+## Current-window new chats — 9 October 2026
+
+- Removed the project-folder window handoff and pending startup chat routing. New chats invoke the installed Codex or Claude Code extension in the current window and use its current workspace.
+- All 42 Node tests and JavaScript checks passed, including both providers when another Atlas project is selected and when no workspace is open.
+- Packaged and installed local version 0.1.10. Installed runtime files match the tested source, and the obsolete startup activation is absent. Existing VS Code windows need Developer: Reload Window to activate the update. Live signed-in provider UI behavior was not exercised.
+
+## Local release 0.1.9 — 9 October 2026
+
+- Fetched the GitHub remote and confirmed the local source has no missing remote commits. Included the folder controls, running-task improvements and native project-chat changes in version 0.1.9; package.json and package-lock.json agree.
+- All 42 Node tests, JavaScript checks and the diff whitespace check passed. The standard Marketplace staging workflow produced chat-atlas-0.1.9.vsix, and its runtime files and listing documents match the local source byte for byte.
+- Updated the clean LLMUtils checkout with a fast-forward pull, passed all 13 installer smoke-test groups, and archived the release through its importer. latest.json selects 0.1.9 with SHA256 7aee089cc336861814c67fee4e156b3af2a1f0d3ad3007449f7fbe0adef21469.
+- Installed through the internal installer and verified lpx.lpx-conversation-board@0.1.9. Installed runtime files match the archive; its package.json matches after allowing VS Code's generated metadata. Existing board state and earlier packages were retained. The user's VS Code windows were not reloaded; reloading activates the installed update in existing windows.
+
+## Running task detection — 9 October 2026
+
+- Recognize Codex prompts, reasoning, both tool-call formats, final-answer phases, completion and interruption; recognize Claude thinking, tool results, stop reasons, turn duration and interruption prompts.
+- Keep activity observations through sampling gaps, partial or oversized appends, malformed non-record lines and clock skew. Metadata-only writes do not revive expired tasks. The inactivity timeout defaults to 60 minutes and is configurable.
+- Watch provider history folders with a two-second polling fallback while the board is visible. Activity messages update the spinner and frame in place. Timers and watchers are disposed with the board, and readings superseded by a full refresh are discarded.
+- All 42 Node tests and JavaScript checks passed. Browser checks passed for matching spinner/frame transitions, unchanged DOM during repeated activity updates, retained scrolling, all three board views, a 390 px layout and reduced motion. Screenshots use fictional chats.
+- A read-only check of local transcript record types confirmed compatibility with the current Codex and Claude formats. Live provider-to-webview operation was not exercised; providers that buffer transcript writes can still delay detection.
+
 ## LPX Marketplace package — 7 October 2026
 
 - Set the publisher to the user-provided `LPX` ID and incremented the package to 0.1.4. Documented the separate identity used by earlier local previews.
