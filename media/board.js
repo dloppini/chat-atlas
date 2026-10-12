@@ -19,7 +19,27 @@ let sidebarPreferencesLoaded = false;
 const columnScroll = new Map();
 const $ = id => document.getElementById(id);
 const send = message => host.postMessage(message);
-function showNotice(message) { $('notice').textContent = message; $('notice').hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 15000); }
+function captureScrollPosition() {
+  const pageScroll = { left: window.scrollX, top: window.scrollY }, board = $('board');
+  for (const column of board.querySelectorAll('.column')) columnScroll.set(`${board.dataset.view}:${board.dataset.mode}:${column.dataset.group}`, column.querySelector('.column-cards').scrollTop);
+  return pageScroll;
+}
+function restoreScrollPosition(pageScroll) {
+  const board = $('board');
+  for (const column of board.querySelectorAll('.column')) column.querySelector('.column-cards').scrollTop = columnScroll.get(`${board.dataset.view}:${board.dataset.mode}:${column.dataset.group}`) || 0;
+  window.scrollTo({ ...pageScroll, behavior: 'instant' });
+}
+function showNotice(message) {
+  const pageScroll = { left: window.scrollX, top: window.scrollY };
+  $('notice').textContent = message; $('notice').hidden = false;
+  window.scrollTo({ ...pageScroll, behavior: 'instant' });
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    const pageScroll = { left: window.scrollX, top: window.scrollY };
+    $('notice').hidden = true;
+    window.scrollTo({ ...pageScroll, behavior: 'instant' });
+  }, 15000);
+}
 const persist = () => host.setState({ view, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
 const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects, sidebarWidth, showSubfolders } }); };
 function sidebarBounds() { return { min: 180, max: Math.max(180, Math.min(520, window.innerWidth - 480)) }; }
@@ -117,9 +137,10 @@ function update(s, patch) {
   send({ type: 'update', key: s.key, patch }); render();
 }
 function select(s, open = false) {
+  const pageScroll = captureScrollPosition();
   selected = s.key; persist();
   if (!open) { detailKey = s.key; excerpts = []; $('detail').hidden = false; renderDetail(); }
-  send({ type: open ? 'open' : 'select', key: s.key }); render();
+  send({ type: open ? 'open' : 'select', key: s.key }); render(pageScroll);
 }
 function setCardRunning(c, running) {
   c.classList.toggle('running', running === true);
@@ -131,6 +152,22 @@ function setCardRunning(c, running) {
   indicator.title = 'Unfinished task detected from local conversation activity';
   const meta = c.querySelector('.card-meta');
   meta.insertBefore(indicator, meta.querySelector('time'));
+}
+function syncProjectRunning() {
+  const counts = new Map();
+  for (const session of data.sessions) if (session.running) {
+    const key = projectGroupKey(session); counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  for (const row of $('projects').querySelectorAll('.project-entry')) {
+    const count = counts.get(row.dataset.project) || 0;
+    const previous = row.querySelector('.project-run-indicator');
+    const nav = row.querySelector('.nav'), status = `${count} running ${count === 1 ? 'task' : 'tasks'}`;
+    nav.setAttribute('aria-label', `${nav.dataset.projectLabel}${count ? `, ${status}` : ''}`);
+    if (!count) { previous?.remove(); continue; }
+    const indicator = previous || el('span', 'run-indicator project-run-indicator');
+    indicator.setAttribute('role', 'img'); indicator.setAttribute('aria-label', status); indicator.title = status;
+    if (!previous) row.querySelector('.project-name-row').append(indicator);
+  }
 }
 function card(s) {
   const c = el('article', `card${s.status === 'Done' ? ' done' : ''}${selected === s.key ? ' selected' : ''}${s.running ? ' running' : ''}`);
@@ -154,9 +191,8 @@ function card(s) {
   setCardRunning(c, s.running);
   return c;
 }
-function render() {
+function render(pageScroll = captureScrollPosition()) {
   const board = $('board');
-  for (const c of board.querySelectorAll('.column')) columnScroll.set(`${board.dataset.view}:${board.dataset.mode}:${c.dataset.group}`, c.querySelector('.column-cards')?.scrollTop || 0);
   const activeEl = document.activeElement;
   const focusKey = activeEl?.closest('.card')?.dataset.key, focusAction = activeEl?.dataset.action;
   const focusColumn = activeEl?.classList.contains('column-focus') ? activeEl.closest('.column').dataset.group : '';
@@ -180,7 +216,7 @@ function render() {
     const nextOrder = [...projectOrder, ...ordered.map(([key]) => key).filter(key => !projectOrder.includes(key))];
     if (JSON.stringify(nextOrder) !== JSON.stringify(projectOrder)) { projectOrder = nextOrder; persistSidebar(); }
   }
-  const sidebarProjects = ordered.filter(([key, p]) => !hiddenProjects.includes(key) && (p.count > 0 || p.created));
+  const sidebarProjects = ordered.filter(([key, p]) => !hiddenProjects.includes(key) && (p.count > 0 || p.created || key === project));
   $('project-sort').value = projectSort;
   $('subfolder-toggle').textContent = showSubfolders ? 'Hide subfolders' : 'Show subfolders';
   $('subfolder-toggle').setAttribute('aria-pressed', String(showSubfolders));
@@ -189,16 +225,22 @@ function render() {
     const b = button('', `nav${project === key && subfolderFilter === null ? ' active' : ''}`, () => { project = key; subfolderFilter = null; persist(); render(); });
     b.title = [p.name, ...p.folders.values()].join('\n');
     b.setAttribute('aria-label', `${p.name}${p.showPath && p.folders.size ? `, ${[...p.folders.keys()][0]}` : ''}, ${p.count} conversations`);
+    b.dataset.projectLabel = b.getAttribute('aria-label');
     const label = el('span', 'project-label');
-    label.append(el('span', 'project-name', p.name));
+    const nameRow = el('span', 'project-name-row'); nameRow.append(el('span', 'project-name', p.name));
+    label.append(nameRow);
     if (p.showPath) label.append(el('span', 'project-path', [...p.folders.keys()][0] || (p.isBoardProject ? 'Board project' : 'No project folder')));
     b.append(el('span', 'project-dot', '◆'), label, el('span', 'project-count', String(p.count)));
     const actions = el('div', 'project-actions');
     const identity = `${p.name}${p.showPath && p.folders.size ? ` (${[...p.folders.keys()][0]})` : ''}`;
     if (projectSort === 'manual') {
-      const up = button('↑', 'project-action', () => reorderProject(key, sidebarProjects[index - 1][0]), `Move ${identity} up`);
-      const down = button('↓', 'project-action', () => reorderProject(key, sidebarProjects[index + 1][0], true), `Move ${identity} down`);
-      up.disabled = index === 0; down.disabled = index === sidebarProjects.length - 1; actions.append(up, down);
+      b.title += '\nDrag to reorder · Alt+Up/Down moves this project';
+      b.addEventListener('keydown', e => {
+        if (!e.altKey || !['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        const after = e.key === 'ArrowDown', target = sidebarProjects[index + (after ? 1 : -1)];
+        if (target) reorderProject(key, target[0], after);
+      });
       row.draggable = true;
       row.addEventListener('dragstart', e => { e.dataTransfer.setData('application/x-chat-atlas-project', key); e.dataTransfer.effectAllowed = 'move'; });
       row.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('application/x-chat-atlas-project')) { e.preventDefault(); row.classList.add('drag-over'); } });
@@ -224,6 +266,7 @@ function render() {
     }
     return [row, ...children];
   }));
+  syncProjectRunning();
   renderHiddenProjects(projects);
   $('total').textContent = data.sessions.length;
   $('all-projects').classList.toggle('active', !project);
@@ -231,8 +274,11 @@ function render() {
   $('heading').textContent = project ? `${projectName}${subfolderFilter === null ? '' : ` / ${subfolderFilter || 'Project root'}`}` : 'All conversations';
   const projectFolder = data.projectCatalog.find(p => p.key === project)?.cwd || '';
   $('project-location').hidden = !project;
-  $('project-folder-path').textContent = projectFolder || 'No folder linked';
-  $('project-folder-path').title = projectFolder;
+  const shownFolder = projectFolder && subfolderFilter ? `${projectFolder.replace(/[\\/]+$/, '')}/${subfolderFilter}` : projectFolder;
+  $('open-project-folder').hidden = !projectFolder;
+  $('open-project-folder').title = shownFolder ? `Open ${shownFolder} in Windows Explorer` : '';
+  $('project-folder-path').textContent = shownFolder || 'No folder linked';
+  $('project-folder-path').title = shownFolder;
   $('link-project-folder').hidden = !project.startsWith('custom:') || !!projectFolder;
   $('new-chat').hidden = !project;
   $('new-chat').title = projectFolder ? `New chat in ${projectName}` : 'Link a folder to start a chat';
@@ -262,12 +308,13 @@ function render() {
   $('focus-strip').hidden = pins.length === 0 || !!focusedGroup;
   board.className = `board${view === 'timeline' ? ' timeline' : ''}${focusedGroup ? ' focused' : ''}`;
   board.dataset.view = view; board.dataset.mode = focusedGroup ? 'focused' : 'overview';
-  $('board').replaceChildren();
+  // Build offscreen so measuring a new column cannot collapse the page mid-render.
+  const content = document.createDocumentFragment();
   if (!visible.length && !focusedGroup) {
     const empty = el('div', 'empty-state');
     empty.append(el('h2', '', data.busy ? 'Gathering your conversations…' : data.sessions.length ? 'A clear board.' : 'Your conversations belong here.'), el('p', '', data.busy ? 'The first scan can take a moment. Subsequent scans reuse the local index.' : data.sessions.length ? 'Try another project, change your search, or show completed chats.' : 'Start a chat in Codex or Claude Code, then refresh. You can also choose your history folders in Settings.'));
     if (!data.busy && !data.sessions.length) empty.append(button('Choose history folders', 'quiet', () => send({ type: 'settings' })));
-    $('board').append(empty);
+    content.append(empty);
   } else for (const group of shownGroups) {
     const i = groups.indexOf(group);
     const column = el('section', `column tone-${i % 6}`); column.dataset.group = group.id;
@@ -283,14 +330,16 @@ function render() {
       column.addEventListener('dragleave', e => { if (!column.contains(e.relatedTarget)) column.classList.remove('drag-over'); });
       column.addEventListener('drop', e => { e.preventDefault(); column.classList.remove('drag-over'); const s = data.sessions.find(s => s.key === e.dataTransfer.getData('text/plain')); if (s) update(s, view === 'topics' ? { topic: group.id } : { status: group.id }); });
     }
-    $('board').append(column);
-    list.scrollTop = columnScroll.get(`${view}:${board.dataset.mode}:${group.id}`) || 0;
+    content.append(column);
   }
+  board.replaceChildren(content);
   if (focusKey && focusAction) {
     const c = [...document.querySelectorAll('.card')].find(n => n.dataset.key === focusKey);
     c?.querySelector(`[data-action="${focusAction}"]`)?.focus({ preventScroll: true });
   }
   if (focusColumn) [...board.querySelectorAll('.column')].find(c => c.dataset.group === focusColumn)?.querySelector('.column-focus')?.focus({ preventScroll: true });
+  // Keep the viewport steady after layout changes and browser scroll anchoring.
+  restoreScrollPosition(pageScroll);
 }
 function renderDetail() {
   const s = data.sessions.find(s => s.key === detailKey); if (!s) return;
@@ -309,9 +358,8 @@ function renderDetail() {
   projectSelect.value = s.projectOverride || '';
   projectSelect.addEventListener('change', () => {
     if (projectSelect.value === '__create__') { projectSelect.value = s.projectOverride || ''; openProjectDialog(s.key); return; }
-    const target = projectSelect.value || originalProjectKey(s);
     update(s, { projectOverride: projectSelect.value || null });
-    project = target; subfolderFilter = null; persist(); render(); renderDetail();
+    renderDetail();
   });
   projectLabel.append(projectSelect); root.append(projectLabel);
   root.append(el('p', 'manual-project-warning', `Manual project choices change only this board. Automatic follows the recorded working folder: ${s.cwd || 'unknown'}. Resuming the chat still uses that folder.`));
@@ -334,13 +382,19 @@ function renderDetail() {
   if (!excerpts.length) root.append(el('p', 'meta', 'Loading excerpts…'));
   for (const message of excerpts) { const item = el('div', 'excerpt'); item.append(el('b', '', message.role === 'user' ? 'YOU' : providerName(s.provider).toUpperCase()), el('p', '', message.text)); root.append(item); }
 }
-function closeDetail() { $('detail').hidden = true; const key = detailKey; detailKey = ''; [...document.querySelectorAll('.card')].find(n => n.dataset.key === key)?.querySelector('.info')?.focus(); }
+function closeDetail() {
+  const pageScroll = captureScrollPosition();
+  $('detail').hidden = true; const key = detailKey; detailKey = '';
+  [...document.querySelectorAll('.card')].find(n => n.dataset.key === key)?.querySelector('.info')?.focus({ preventScroll: true });
+  restoreScrollPosition(pageScroll);
+}
 window.addEventListener('message', e => {
   const m = e.data;
   if (m.type === 'activity' && Array.isArray(m.sessions)) {
     const activity = new Map(m.sessions.map(s => [s.key, s.running === true]));
     for (const session of data.sessions) if (activity.has(session.key)) session.running = activity.get(session.key);
     for (const card of document.querySelectorAll('article.card')) if (activity.has(card.dataset.key)) setCardRunning(card, activity.get(card.dataset.key));
+    syncProjectRunning();
     return;
   }
   if (m.type === 'data') {
@@ -356,9 +410,14 @@ window.addEventListener('message', e => {
   }
   if (m.type === 'detail' && m.key === detailKey) { excerpts = m.messages; sampled = m.sampled; renderDetail(); }
   if (m.type === 'projectCreated') {
+    const movedChat = !!projectDialogKey;
     if ($('project-dialog').open) $('project-dialog').close();
-    if (detailKey) closeDetail();
-    project = m.key; subfolderFilter = null; persist(); render();
+    projectDialogKey = '';
+    if (movedChat) { render(); renderDetail(); }
+    else {
+      if (detailKey) closeDetail();
+      project = m.key; subfolderFilter = null; persist(); render();
+    }
   }
   if (m.type === 'projectFolderLinked') {
     if ($('project-dialog').open) $('project-dialog').close();
@@ -390,6 +449,7 @@ $('settings').addEventListener('click', () => send({ type: 'settings' }));
 $('sidebar-toggle').addEventListener('click', () => { sidebarHidden = !sidebarHidden; persist(); render(); });
 $('project-sort').addEventListener('change', e => { projectSort = e.target.value; persistSidebar(); render(); });
 $('new-project').addEventListener('click', () => openProjectDialog());
+$('open-project-folder').addEventListener('click', () => send({ type: 'openProjectFolder', projectKey: project, subfolder: subfolderFilter || '' }));
 $('link-project-folder').addEventListener('click', () => openProjectDialog('', project));
 $('browse-project-folder').addEventListener('click', () => send({ type: 'pickProjectFolder', requestId: ++folderRequestId, folder: $('project-folder').value }));
 $('cancel-project').addEventListener('click', () => $('project-dialog').close());

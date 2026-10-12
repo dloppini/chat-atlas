@@ -15,14 +15,15 @@ async function extensionHarness(t, stored = {}, sessions = []) {
   await fs.mkdir(path.join(folder, 'Subfolder'), { recursive: true });
   const file = path.join(root, 'file.txt');
   await fs.writeFile(file, 'fixture');
-  const messages = [], errors = [], pickerCalls = [], chats = [], commands = new Map(), intervals = [], timeouts = [], watchers = [], subscriptions = [];
+  const messages = [], errors = [], pickerCalls = [], openedFolders = [], chats = [], commands = new Map(), intervals = [], timeouts = [], watchers = [], subscriptions = [];
   const storage = structuredClone(stored);
   let receive, selectedFolder, activityResult, scanCount = 0, disposePanel;
   const uri = folderPath => ({ scheme: 'file', fsPath: folderPath, toString: () => folderPath });
   const vscode = {
+    env: { openExternal: async value => { openedFolders.push(value.fsPath); return true; } },
     Uri: { file: uri, joinPath: (base, ...parts) => uri(path.join(base.fsPath, ...parts)) },
     ViewColumn: { One: 1 }, StatusBarAlignment: { Left: 1 },
-    workspace: { workspaceFolders: [{ uri: uri(root) }], getConfiguration: () => ({ get: (key, fallback) => key === 'codexHome' ? path.join(root, 'codex') : key === 'claudeHome' ? path.join(root, 'claude') : fallback }) },
+    workspace: { onDidGrantWorkspaceTrust: () => ({ dispose() {} }), workspaceFolders: [{ uri: uri(root) }], getConfiguration: () => ({ get: (key, fallback) => key === 'codexHome' ? path.join(root, 'codex') : key === 'claudeHome' ? path.join(root, 'claude') : fallback }) },
     commands: { registerCommand: (name, callback) => { commands.set(name, callback); return { dispose() {} }; } },
     window: {
       showErrorMessage: text => errors.push(text),
@@ -48,7 +49,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
         async refreshActivity(current) { return activityResult ? await activityResult(current) : structuredClone(sessions); }
       } };
       if (name === 'node:fs') return { watch: (root, options, callback) => { const watcher = { root, options, callback, on() {}, close() { this.closed = true; } }; watchers.push(watcher); return watcher; } };
-      if (name === './providers') return { openNewProjectChat: (...args) => chats.push(args.slice(1, 4)) };
+      if (name === './providers') return { openNewProjectChat: (...args) => chats.push(args.slice(1, 3)), resumePendingProjectChats: async () => {} };
       if (name === '../media/projects') return projects;
       return require(name);
     }
@@ -60,7 +61,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
   });
   await commands.get('chatAtlas.open')();
   await api.refresh();
-  return { root, folder, file, messages, errors, pickerCalls, chats, storage, api, intervals, timeouts, watchers, subscriptions,
+  return { root, folder, file, messages, errors, pickerCalls, openedFolders, chats, storage, api, intervals, timeouts, watchers, subscriptions,
     send: m => receive(m), pick: value => { selectedFolder = value; }, latest: () => messages.findLast(m => m.type === 'data'),
     setSessions: value => { sessions = value; }, setActivity: value => { activityResult = value; }, scanCount: () => scanCount };
 }
@@ -123,7 +124,7 @@ test('Linking after creation persists chats and sidebar preferences, joins folde
   assert.equal(h.latest().sessions[0].projectOverride, key);
   assert.deepEqual(h.latest().subfolders[key], ['Subfolder']);
   await h.send({ type: 'newChat', projectKey: key, provider: 'codex' });
-  assert.deepEqual(h.chats[0], ['codex', h.folder, 'My project']);
+  assert.deepEqual(h.chats[0], ['codex', h.folder]);
   const future = { ...session, key: 'codex:future', cwd: h.folder, project: 'Automatic name' };
   const restarted = await extensionHarness(t, h.storage, [session, future]);
   assert.equal(restarted.latest().projectCatalog.some(p => p.key === previousKey), false);
@@ -179,4 +180,23 @@ test('History notifications coalesce writes, discover new chats and release watc
   h.subscriptions.at(-1).dispose();
   assert.equal(h.watchers.every(watcher => watcher.closed), true);
   assert.equal(h.intervals.every(timer => timer.cleared), true);
+});
+
+test('Explorer opens the selected project or known subfolder and rejects unavailable targets', async t => {
+  const h = await extensionHarness(t);
+  await h.send({ type: 'createProject', name: 'Explorer project', folder: h.folder });
+  const projectKey = projects.originalProjectKey({ cwd: h.folder });
+  await h.send({ type: 'openProjectFolder', projectKey });
+  await h.send({ type: 'openProjectFolder', projectKey, subfolder: 'Subfolder' });
+  assert.deepEqual(h.openedFolders, [h.folder, path.join(h.folder, 'Subfolder')]);
+  for (const subfolder of ['../', 'missing', h.root]) {
+    await h.send({ type: 'openProjectFolder', projectKey, subfolder });
+    assert.match(h.messages.at(-1).text, /subfolder is unavailable/);
+  }
+  await fs.rmdir(path.join(h.folder, 'Subfolder'));
+  await h.send({ type: 'openProjectFolder', projectKey, subfolder: 'Subfolder' });
+  assert.match(h.messages.at(-1).text, /cannot be found/);
+  assert.equal(h.openedFolders.length, 2);
+  await h.send({ type: 'openProjectFolder', projectKey: 'custom:missing' });
+  assert.match(h.messages.at(-1).text, /Link this project/);
 });

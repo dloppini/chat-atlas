@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.16 ? 12 October 2026
+
+- Open the selected project folder or subfolder in Windows Explorer from the folder path.
+
+## 0.1.15 ? 11 October 2026
+
+- Leave new project chats untitled so Codex can generate a title from the conversation.
+
+## 0.1.14 — 10 October 2026
+
+- Remove the project reorder arrows from Manual sorting; retain drag-and-drop and Alt+Up/Down keyboard sorting.
+- Keep the current project selected when moving a task, including moves into a new project or moving the last task out.
+- Keep the project sidebar visible when task details are open in narrower desktop windows.
+
+## 0.1.13 — 10 October 2026
+
+- Show a spinner beside each sidebar project with running tasks, with its running count on hover.
+- Start Codex project chats in the selected working folder in the current window, setting the folder in the background. Claude Code project chats require that folder to be open already.
+
+## 0.1.12 — 10 October 2026
+
+- Start new project chats in the selected project's working folder so their cards join that project. Open a separate project window when another workspace is active.
+
+## 0.1.11 — 10 October 2026
+
+- Keep the page and conversation lists at their current scroll position when selecting chats, opening or closing details, marking chats done, and refreshing the board.
+
 ## 0.1.10 — 9 October 2026
 
 - Open the board in Timeline view and show the current version beneath the sidebar title.

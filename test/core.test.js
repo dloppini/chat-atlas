@@ -267,64 +267,62 @@ test('Missing native extensions return false and untrusted session IDs are rejec
   assert.equal(await openNativeSession(vscode, { provider: 'claude', id }), false);
   await assert.rejects(openNativeSession(vscode, { provider: 'codex', id: 'x;calc' }), /Invalid session/);
 });
-function newChatFixture(cwd = 'C:/Code/chat-atlas') {
+async function newChatFixture(t, cwd = 'C:/Code/chat-atlas') {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-chat-test-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const calls = [], storage = new Map();
-  const context = { globalState: { get: (key, fallback) => storage.get(key) ?? fallback, update: async (key, value) => { storage.set(key, value); } } };
+  const context = { findBinary: async () => 'fixture-codex', createChat: async (_binary, cwd) => ({ provider: 'codex', id, cwd }), globalStorageUri: { fsPath: root }, globalState: { get: (key, fallback) => storage.get(key) ?? fallback, update: async (key, value) => { storage.set(key, value); } } };
   const vscode = {
-    workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: cwd } }] },
+    workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: cwd } }], getConfiguration: () => ({ get: (_key, fallback) => fallback }) },
     extensions: { getExtension: () => ({ activate: async () => {} }) },
     commands: {
       getCommands: async () => ['chatgpt.openSidebar', 'chatgpt.newChat', 'claude-vscode.editor.open'],
       executeCommand: async (...args) => calls.push(args)
     },
-    Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
+    Uri: { file: fsPath => ({ scheme: 'file', fsPath }), parse: value => value },
+    env: { uriScheme: 'vscode', openExternal: async uri => { calls.push(['openExternal', uri]); return true; } },
     window: { createTerminal: () => assert.fail('New chats must use the provider UI') }
   };
   return { vscode, context, calls, storage };
 }
-test('New Codex and Claude chats use their native UIs in the current project', async () => {
-  const { vscode, context, calls, storage } = newChatFixture();
-  await openNewProjectChat(vscode, 'codex', 'c:\\code\\chat-atlas\\', 'Chat Atlas', context);
-  assert.deepEqual(calls, [['chatgpt.openSidebar'], ['chatgpt.newChat']]);
+test('Codex pins the selected cwd even in the current project and Claude uses its matching workspace', async t => {
+  const { vscode, context, calls, storage } = await newChatFixture(t);
+  await openNewProjectChat(vscode, 'codex', 'c:\\code\\chat-atlas\\', context);
+  assert.deepEqual(calls, [['openExternal', `vscode://openai.chatgpt/local/${id}`]]);
   calls.length = 0;
-  await openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', 'Chat Atlas', context);
+  await openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', context);
   assert.deepEqual(calls, [['claude-vscode.editor.open']]);
   assert.equal(storage.size, 0);
-  await assert.rejects(openNewProjectChat(vscode, 'invalid', 'C:/Code/chat-atlas', 'Chat Atlas', context), /Invalid new-chat target/);
+  await assert.rejects(openNewProjectChat(vscode, 'invalid', 'C:/Code/chat-atlas', context), /Invalid new-chat target/);
 });
-test('Missing provider extensions or UI commands fail without a terminal fallback', async () => {
-  const { vscode, context, calls } = newChatFixture();
+test('Missing provider extensions or UI commands fail without a terminal fallback', async t => {
+  const { vscode, context, calls } = await newChatFixture(t);
   vscode.extensions.getExtension = () => undefined;
-  await assert.rejects(openNewProjectChat(vscode, 'codex', 'C:/Code/chat-atlas', 'Chat Atlas', context), /Install the Codex VS Code extension/);
-  vscode.extensions.getExtension = () => ({ activate: async () => {} });
+  await assert.rejects(openNewProjectChat(vscode, 'codex', 'C:/Code/chat-atlas', context), /Install the Codex VS Code extension/);
+  vscode.extensions.getExtension = () => ({ activate: async t => {} });
   vscode.commands.getCommands = async () => [];
-  await assert.rejects(openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', 'Chat Atlas', context), /new-chat UI is unavailable/);
+  await assert.rejects(openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', context), /new-chat UI is unavailable/);
   assert.deepEqual(calls, []);
 });
-test('A different project opens both provider UIs in the current window', async () => {
-  const { vscode, context, calls, storage } = newChatFixture();
-  const originalFolders = structuredClone(vscode.workspace.workspaceFolders);
-  await openNewProjectChat(vscode, 'codex', 'C:/Code/other', 'Other', context);
-  assert.deepEqual(calls, [['chatgpt.openSidebar'], ['chatgpt.newChat']]);
+test('Codex creates a project chat in the background and opens its native sidebar in the same window', async t => {
+  const { vscode, calls } = await newChatFixture(t);
+  const folders = structuredClone(vscode.workspace.workspaceFolders);
+  vscode.workspace.getConfiguration = () => ({ get: (_key, fallback) => fallback });
+  vscode.env = { uriScheme: 'vscode', openExternal: async uri => { calls.push(['openExternal', uri]); return true; } };
+  vscode.Uri.parse = value => value;
+  const options = { findBinary: async () => 'fixture-codex', createChat: async (binary, cwd) => { assert.equal(binary, 'fixture-codex'); assert.equal(cwd, 'C:/Code/other'); return { provider: 'codex', id, cwd }; } };
+  await openNewProjectChat(vscode, 'codex', 'C:/Code/other', options);
+  assert.deepEqual(calls, [['openExternal', `vscode://openai.chatgpt/local/${id}`]]);
+  assert.deepEqual(vscode.workspace.workspaceFolders, folders);
   calls.length = 0;
-  await openNewProjectChat(vscode, 'claude', 'C:/Code/other', 'Other', context);
-  assert.deepEqual(calls, [['claude-vscode.editor.open']]);
-  assert.deepEqual(vscode.workspace.workspaceFolders, originalFolders);
-  assert.equal(storage.size, 0);
+  options.createChat = async () => { throw new Error('Could not create thread'); };
+  await assert.rejects(openNewProjectChat(vscode, 'codex', 'C:/Code/other', options), /Could not create thread/);
+  assert.deepEqual(calls, []);
 });
-test('Provider UI launch failures propagate without opening a project window', async () => {
-  const { vscode, context, storage } = newChatFixture();
-  vscode.commands.executeCommand = async () => { throw new Error('Chat launch failed'); };
-  await assert.rejects(openNewProjectChat(vscode, 'codex', 'C:/Code/other', 'Other', context), /Chat launch failed/);
-  assert.equal(storage.size, 0);
-});
-test('A window without a workspace still opens the selected provider UI there', async () => {
-  const { vscode, context, calls, storage } = newChatFixture();
-  vscode.workspace.workspaceFolders = undefined;
-  await openNewProjectChat(vscode, 'codex', 'C:/Code/other', 'Other', context);
-  assert.deepEqual(calls, [['chatgpt.openSidebar'], ['chatgpt.newChat']]);
-  calls.length = 0;
-  await openNewProjectChat(vscode, 'claude', 'C:/Code/other', 'Other', context);
-  assert.deepEqual(calls, [['claude-vscode.editor.open']]);
-  assert.equal(storage.size, 0);
+test('Claude does not launch in the wrong folder or change the workspace', async t => {
+  const { vscode, calls } = await newChatFixture(t);
+  const folders = structuredClone(vscode.workspace.workspaceFolders);
+  await assert.rejects(openNewProjectChat(vscode, 'claude', 'C:/Code/other'), /Use Codex here/);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(vscode.workspace.workspaceFolders, folders);
 });

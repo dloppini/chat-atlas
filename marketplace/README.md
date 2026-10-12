@@ -10,13 +10,15 @@ Requires Visual Studio Code 1.96 or newer and local history from either supporte
 
 - Group conversations by topic, workflow status, or creation date.
 - Search and filter by project or provider. Keep separate folders distinct, including folders with matching project names.
-- Hide or restore project entries. Sort projects alphabetically or arrange them manually.
+- Hide or restore project entries. Sort projects alphabetically or arrange them manually by dragging or Alt+Up/Down.
+- Move tasks between projects while keeping the current project selected and sidebar visibility unchanged.
 - Resize the project sidebar and focus individual board columns.
 - Pin conversations, add notes, and mark tasks Done. Completion can be reversed.
 - Preview the latest message and reopen conversations through an installed provider extension or its command-line tool.
 - Browse for an existing project folder during creation or link it later. The project page shows its linked path and retains assigned conversations.
 - See a running spinner and frame for unfinished tasks. Activity checks update every two seconds; completion and interruption stop the indicator when detected. The inactivity timeout is configurable.
-- Start new project chats in the provider's native UI in the current VS Code window, using its current workspace.
+- Start Codex chats in the selected project's working folder in the current window. Claude Code requires that project folder to be the current workspace. Cards join the project after the first message.
+- See a spinner beside sidebar project names while their chats have running tasks.
 
 ## Local data
 

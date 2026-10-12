@@ -172,13 +172,22 @@ function activate(context) {
         subfolders = await scanSubfolders(current.sessions);
         publish(); post({ type: 'projectFolderLinked', previousKey: m.projectKey, key }); return;
       }
+      if (m.type === 'openProjectFolder') {
+        const project = projectCatalog(current.sessions, state.customProjects || []).find(item => item.key === m.projectKey);
+        if (!project?.cwd) throw new Error('Link this project to a folder before opening it in Explorer.');
+        const subfolder = typeof m.subfolder === 'string' ? m.subfolder : '';
+        if (subfolder && !(subfolders[m.projectKey] || []).includes(subfolder)) throw new Error('The project subfolder is unavailable. Refresh the board and try again.');
+        const folder = await validateProjectFolder(subfolder ? path.join(project.cwd, subfolder) : project.cwd, true);
+        if (!await vscode.env.openExternal(vscode.Uri.file(folder))) throw new Error('Windows Explorer could not open the folder.');
+        return;
+      }
       if (m.type === 'newChat') {
         const project = projectCatalog(current.sessions, state.customProjects || []).find(item => item.key === m.projectKey);
         if (!project?.cwd) throw new Error('Link this project to an existing folder before starting a chat.');
         let stat;
         try { stat = await fs.stat(project.cwd); } catch { throw new Error('The project folder is unavailable.'); }
         if (!stat.isDirectory()) throw new Error('The project path must be a folder.');
-        await openNewProjectChat(vscode, m.provider, project.cwd, project.name);
+        await openNewProjectChat(vscode, m.provider, project.cwd, { codexHome: settings().codexHome, projectName: project.name });
         return;
       }
       if (m.type === 'createProject') {

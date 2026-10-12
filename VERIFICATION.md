@@ -1,5 +1,31 @@
 # Verification — 6 October 2026
 
+## Project moves and manual sorting — 10 October 2026
+
+- Local version 0.1.14 removes the Manual sorting arrow buttons, retaining native drag-and-drop and Alt+Up/Down keyboard reordering. Alphabetical sorting and the saved manual order remain available.
+- Moving a task to an existing or newly created project retains the current project selection and open details. The selected source project stays in the sidebar after its last task moves away. Explicit sidebar visibility is preserved; details overlay the board at narrower desktop widths instead of hiding the project rail or its toggle.
+- JavaScript checks and all 44 Node tests passed. The browser preview passed 57 project-move/sorting checks at 1440, 1000, 800, 681, and 390 pixels, plus all 30 existing scroll checks. Desktop and phone screenshots were inspected; the design detector reported no findings in the changed JavaScript and CSS.
+- Packaged and installed 0.1.14 locally. Installed board JavaScript, CSS, and HTML hashes match source. Existing windows need **Developer: Reload Window**. The actual VS Code webview and Marketplace acceptance of this version were not exercised; browser checks use fictional preview conversations.
+
+## Background project chats and sidebar activity — 10 October 2026
+
+- Local version 0.1.13 supersedes the separate-window behavior in 0.1.12. Codex creates a persisted empty chat with the selected project folder through its shipped runtime, then opens that chat in the current sidebar. No workspace switch or prompt is sent. Claude Code's public command has no folder override; a different folder is rejected rather than starting in the wrong project.
+- All 44 Node tests, JavaScript checks, and the diff whitespace check passed. Tests cover runtime initialization, folder validation, persistent naming, process cleanup, provider routing, and folder-backed card association. A separate smoke check against the installed Codex runtime created a chat in an isolated temporary home and resumed it in another process with the same ID and working folder. No signed-in request or model turn was made.
+- The shared browser preview passed 15 sidebar activity checks and all 30 scroll checks at 1440, 800, and 390 px. Project indicators update in place, count manually assigned and filtered running tasks, clear when the last task stops, and respect reduced motion. Desktop and mobile screenshots were inspected. The design detector reported no findings in the changed board JavaScript and CSS.
+- Packaged and installed 0.1.13; installed runtime files match the tested source and startup handoff activation is absent. Signed-in native sidebar launch and the live VS Code webview remain unverified. Existing windows need Developer: Reload Window to activate this update.
+
+## Project chat working folders — 10 October 2026
+
+- New project chats use the selected project's folder. A single matching workspace launches directly; a different, empty, or multi-root workspace opens a separate folder window, which consumes the saved launch request on startup. Requests expire after five minutes, wait for workspace trust, and are claimed once across matching windows.
+- All 43 Node tests and JavaScript checks passed, covering both providers, equivalent Windows paths, source-window exclusion, concurrent claims, reload replay prevention, failed handoff cleanup, empty/multi-root workspaces, trust, expiry, and automatic card association with folder-backed projects. Inspected the installed Codex 26.1007.21434 command: New Chat accepts no folder argument and starts through its webview.
+- The browser preview passed the project-key launch check and dialog checks at 1440 and 390 px; both screenshots were inspected. Packaged and installed local version 0.1.12 and verified installed runtime files and startup activation match the tested source. Signed-in provider launch and actual cross-window startup were not exercised; local tests simulate the VS Code/provider command boundary. Existing windows need Developer: Reload Window to activate this update.
+
+## Scroll position preservation — 10 October 2026
+
+- Preserve page and column positions before changing detail layout; build replacement board content offscreen and restore scrolling without moving keyboard focus into view. Selection notices also retain the page position.
+- All 42 Node tests and JavaScript checks passed. The reusable preview check in `scripts/check-scroll-browser.cjs` passed 30 assertions across 1440, 800, and 390 px layouts, including details, resume selection, Done/reopen, host replies, refresh, and scrolled Topics, Workflow, and focused Timeline columns. Desktop and mobile screenshots were inspected; no horizontal overflow was detected.
+- Packaged and installed local version 0.1.11. These checks used fictional conversations in the shared browser preview; signed-in provider resume and the live VS Code webview were not exercised. Existing windows need Developer: Reload Window to activate the installed update.
+
 ## Timeline startup and sidebar version — 9 October 2026
 
 - The board starts in Timeline even when Topics or Workflow was saved previously. Focus from another view is discarded; project, search and sidebar preferences remain available.

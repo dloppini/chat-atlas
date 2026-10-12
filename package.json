@@ -2,7 +2,7 @@
   "name": "lpx-conversation-board",
   "displayName": "Chat Atlas by LPX",
   "description": "A local conversation organizer with project filters, topic boards, workflow status, and a timeline.",
-  "version": "0.1.10",
+  "version": "0.1.16",
   "publisher": "lpx",
   "author": {
     "name": "LPX"
@@ -102,7 +102,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/extension.js && node --check src/core.js && node --check src/providers.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js && node --check scripts/package.js",
+    "check": "node --check src/extension.js && node --check src/core.js && node --check src/providers.js && node --check src/codex-chat.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js && node --check scripts/package.js",
     "package": "node scripts/package.js",
     "preview": "node scripts/preview.js"
   },

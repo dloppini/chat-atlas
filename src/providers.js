@@ -1,5 +1,12 @@
 'use strict';
 const { UUID } = require('./core');
+const { canonicalProjectPath } = require('../media/projects');
+const { codexBinary, createCodexProjectChat } = require('./codex-chat');
+
+function isProjectWorkspace(vscode, cwd) {
+  const folders = vscode.workspace.workspaceFolders;
+  return folders?.length === 1 && folders[0].uri.scheme === 'file' && canonicalProjectPath(folders[0].uri.fsPath) === canonicalProjectPath(cwd);
+}
 
 // These provider-owned routes are version-sensitive. Keep all native routing here.
 async function openNativeSession(vscode, session, editor = false) {
@@ -40,9 +47,19 @@ async function newChatCommands(vscode, provider) {
 async function startNativeChat(vscode, provider) {
   for (const command of await newChatCommands(vscode, provider)) await vscode.commands.executeCommand(command);
 }
-async function openNewProjectChat(vscode, provider, cwd) {
+async function openNewProjectChat(vscode, provider, cwd, options = {}) {
   if (!['codex', 'claude'].includes(provider) || typeof cwd !== 'string' || !cwd) throw new Error('Invalid new-chat target.');
-  // New-chat commands use this window's workspace. Keep the user's current window.
-  await startNativeChat(vscode, provider);
+  if (provider === 'claude' && isProjectWorkspace(vscode, cwd)) {
+    await startNativeChat(vscode, provider);
+    return;
+  }
+  if (provider === 'claude') throw new Error('Claude Code cannot start a chat in another folder in this window. Use Codex here, or open the project folder in VS Code first.');
+  const extension = vscode.extensions.getExtension('openai.chatgpt');
+  if (!extension) throw new Error('Install the Codex VS Code extension to start a chat in its UI.');
+  await extension.activate();
+  if (vscode.workspace.getConfiguration('chatgpt').get('runCodexInWindowsSubsystemForLinux', false)) throw new Error('Background project chat creation requires the local Codex runtime. Disable Codex in WSL or open the project in a WSL workspace.');
+  const binary = await (options.findBinary || codexBinary)(extension.extensionPath);
+  const session = await (options.createChat || createCodexProjectChat)(binary, cwd, options);
+  if (!await openNativeSession(vscode, session)) throw new Error('The project chat was created, but the Codex sidebar could not open it.');
 }
 module.exports = { openNativeSession, openNewProjectChat };
