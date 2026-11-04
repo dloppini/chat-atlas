@@ -10,6 +10,7 @@ if(new URLSearchParams(location.search).has('subfolders')) sidebarPreferences.sh
 window.atlasMessages=[];
 window.atlasPreview={getState:()=>JSON.parse(localStorage.getItem('atlasDemoUi')||'null'),setState:s=>localStorage.setItem('atlasDemoUi',JSON.stringify(s)),postMessage:m=>{
   window.atlasMessages.push(m);
+  if(m.type==='batchStatus')for(const s of board.sessions)if(m.keys.includes(s.key)){s.status=m.status;s.completedAt=m.status==='Done'?Date.now():null;}
   if(m.type==='sidebarPreferences'){sidebarPreferences=m.preferences;localStorage.setItem('atlasDemoSidebar',JSON.stringify(sidebarPreferences));return;}
   if(m.type==='update'){
     const s=board.sessions.find(s=>s.key===m.key);Object.assign(s,m.patch);
@@ -19,6 +20,15 @@ window.atlasPreview={getState:()=>JSON.parse(localStorage.getItem('atlasDemoUi')
   if(m.type==='select')setTimeout(()=>window.postMessage({type:'detail',key:m.key,messages:[{role:'user',text:board.sessions.find(s=>s.key===m.key).preview},{role:'assistant',text:'The changes are ready for review. This is a demonstration conversation.'}]}),5);
   if(m.type==='open')window.postMessage({type:'notice',text:'Demo preview: the installed extension resumes this conversation in its provider.'});
   if(m.type==='newChat')window.postMessage({type:'notice',text:'Demo preview: a new '+m.provider+' chat would open in the selected project folder.'});
+  if(m.type==='renameProject'){
+    const target=board.projectCatalog.find(p=>p.key===m.projectKey);
+    if(!target)return;
+    const name=window.prompt('Rename project (1 to 80 characters)',target.name);
+    if(name===null)return;
+    if(!name.trim()||name.trim().length>80){window.postMessage({type:'notice',text:'Choose a project name of 1 to 80 characters.'});return;}
+    target.name=name.trim();
+    for(const s of board.sessions)if(projectGroupKey(s)===target.key)s.project=target.name;
+  }
   if(m.type==='pickProjectFolder')window.postMessage({type:'projectError',text:'Demo preview: Browse opens the native folder picker in VS Code. Enter a fictional absolute path here.'});
   if(m.type==='addTopic')board.topics.push({id:'custom-'+Date.now(),name:m.name,keywords:m.keywords});
   let createdKey='';
@@ -40,7 +50,7 @@ window.atlasPreview={getState:()=>JSON.parse(localStorage.getItem('atlasDemoUi')
     if(!board.projectCatalog.some(p=>p.key===createdKey))board.projectCatalog.push({key:createdKey,name:m.name,cwd:m.folder||'',created:true});
     const s=board.sessions.find(s=>s.key===m.key);if(s){s.projectOverride=createdKey;s.project=m.name;delete s.subfolder;}
   }
-  if(['ready','refresh','update','addTopic','createProject','linkProjectFolder'].includes(m.type)){
+  if(['ready','refresh','update','batchStatus','addTopic','createProject','linkProjectFolder','renameProject'].includes(m.type)){
     localStorage.setItem('atlasDemoData',JSON.stringify(board));
     setTimeout(()=>{window.postMessage({...board,sidebarPreferences});if(createdKey)window.postMessage({type:'projectCreated',key:createdKey});if(linkedKey)window.postMessage({type:'projectFolderLinked',previousKey:m.projectKey,key:linkedKey});},10);
   }

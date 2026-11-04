@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.19 - 4 November 2026
+
+- Rename projects on the board while retaining their folders and chat assignments.
+- Open new Codex chats without waiting for the background helper to finish shutting down.
+- Use conversation text for titles when saved titles are placeholders or skill invocations.
+
+## 0.1.18 - 19 October 2026
+
+- Search user and assistant messages throughout indexed conversations, including the middle of long chats.
+- Cache conversation search text and refresh it when transcript files change.
+
+## 0.1.17 - 17 October 2026
+
+- Select all tasks in a section or individual tasks and change their status in one batch. Selection respects the current filters.
+
 ## 0.1.16 ? 12 October 2026
 
 - Open the selected project folder or subfolder in Windows Explorer from the folder path.

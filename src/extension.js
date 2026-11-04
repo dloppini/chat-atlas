@@ -30,7 +30,7 @@ function activate(context) {
   const publish = () => {
     const sessions = visibleSessions();
     publishedRunning = new Map(sessions.map(s => [s.key, s.running]));
-    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: projectCatalog(current.sessions, state.customProjects || []), sidebarPreferences, subfolders, busy });
+    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: projectCatalog(current.sessions, state.customProjects || [], state.projectNames), sidebarPreferences, subfolders, busy });
   };
   async function refreshActivity() {
     if (disposed || busy || activityBusy || !panel?.visible) return;
@@ -164,6 +164,9 @@ function activate(context) {
       if (m.type === 'linkProjectFolder') {
         const cwd = await validateProjectFolder(m.folder, true);
         const key = linkProjectFolder(state, m.projectKey, cwd);
+        if (state.projectNames?.[m.projectKey]) {
+          state.projectNames[key] = state.projectNames[m.projectKey]; delete state.projectNames[m.projectKey];
+        }
         sidebarPreferences = { ...sidebarPreferences, projectOrder: remapProjectKeys(sidebarPreferences.projectOrder, m.projectKey, key), hiddenProjects: remapProjectKeys(sidebarPreferences.hiddenProjects, m.projectKey, key) };
         await save();
         const snapshot = structuredClone(sidebarPreferences);
@@ -173,7 +176,7 @@ function activate(context) {
         publish(); post({ type: 'projectFolderLinked', previousKey: m.projectKey, key }); return;
       }
       if (m.type === 'openProjectFolder') {
-        const project = projectCatalog(current.sessions, state.customProjects || []).find(item => item.key === m.projectKey);
+        const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
         if (!project?.cwd) throw new Error('Link this project to a folder before opening it in Explorer.');
         const subfolder = typeof m.subfolder === 'string' ? m.subfolder : '';
         if (subfolder && !(subfolders[m.projectKey] || []).includes(subfolder)) throw new Error('The project subfolder is unavailable. Refresh the board and try again.');
@@ -182,7 +185,7 @@ function activate(context) {
         return;
       }
       if (m.type === 'newChat') {
-        const project = projectCatalog(current.sessions, state.customProjects || []).find(item => item.key === m.projectKey);
+        const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
         if (!project?.cwd) throw new Error('Link this project to an existing folder before starting a chat.');
         let stat;
         try { stat = await fs.stat(project.cwd); } catch { throw new Error('The project folder is unavailable.'); }
@@ -190,13 +193,25 @@ function activate(context) {
         await openNewProjectChat(vscode, m.provider, project.cwd, { codexHome: settings().codexHome, projectName: project.name });
         return;
       }
+      if (m.type === 'renameProject') {
+        const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
+        if (!project) throw new Error('The project is unavailable. Refresh the board and try again.');
+        const validateInput = value => !value.trim() || value.trim().length > 80 ? 'Choose a project name of 1 to 80 characters.' : null;
+        const value = await vscode.window.showInputBox({ title: 'Rename project', prompt: 'Change the board name. The folder and chat assignments stay unchanged.', value: project.name, validateInput });
+        if (value === undefined) return;
+        const error = validateInput(value);
+        if (error) throw new Error(error);
+        state.projectNames ||= {};
+        state.projectNames[project.key] = value.trim();
+        await save(); publish(); return;
+      }
       if (m.type === 'createProject') {
         const s = m.key ? current.sessions.find(s => s.key === m.key) : null;
         if (m.key && !s) return;
         const name = typeof m.name === 'string' ? m.name.trim() : '';
         if (!name || name.length > 80) throw new Error('Choose a project name of 1 to 80 characters.');
         const cwd = await validateProjectFolder(m.folder);
-        const existing = projectCatalog(current.sessions, state.customProjects || []);
+        const existing = projectCatalog(current.sessions, state.customProjects || [], state.projectNames);
         const key = cwd ? originalProjectKey({ cwd }) : '';
         if (cwd && existing.some(p => p.key === key)) {
           if (s) { if (key === originalProjectKey(s)) delete state.cards[s.key].projectOverride; else state.cards[s.key].projectOverride = key; delete state.cards[s.key].subfolder; await save(); }
@@ -212,6 +227,15 @@ function activate(context) {
         if (cwd) subfolders = await scanSubfolders(current.sessions);
         await save(); await publish(); post({ type: 'projectCreated', key: createdKey }); return;
       }
+      if (m.type === 'batchStatus') {
+        if (!Array.isArray(m.keys) || !['Inbox', 'In progress', 'Waiting', 'Done'].includes(m.status)) return;
+        const keys = new Set(m.keys.filter(key => typeof key === 'string'));
+        const completedAt = m.status === 'Done' ? Date.now() : null;
+        for (const session of current.sessions) if (keys.has(session.key)) {
+          Object.assign(state.cards[session.key], { status: m.status, completedAt });
+        }
+        await save(); publish(); return;
+      }
       const s = current.sessions.find(s => s.key === m.key);
       if (!s) return;
       const card = state.cards[s.key];
@@ -223,7 +247,7 @@ function activate(context) {
       if (m.type === 'update') {
         const p = m.patch || {};
         if (p.projectOverride === null) { delete card.projectOverride; delete card.subfolder; }
-        else if (typeof p.projectOverride === 'string' && projectCatalog(current.sessions, state.customProjects || []).some(item => item.key === p.projectOverride)) {
+        else if (typeof p.projectOverride === 'string' && projectCatalog(current.sessions, state.customProjects || [], state.projectNames).some(item => item.key === p.projectOverride)) {
           if (p.projectOverride === originalProjectKey(s)) delete card.projectOverride;
           else card.projectOverride = p.projectOverride;
           delete card.subfolder;

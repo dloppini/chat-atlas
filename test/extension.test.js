@@ -8,6 +8,21 @@ const vm = require('node:vm');
 const core = require('../src/core');
 const projects = require('../media/projects');
 
+test('Batch status persists only known selected cards and maintains completion timestamps', async t => {
+  const sessions = ['one', 'two', 'other'].map(id => ({ key: `codex:${id}`, provider: 'codex', project: 'Fixture', cwd: '/fixture', title: id, preview: '', createdAt: 1, updatedAt: 2 }));
+  const h = await extensionHarness(t, {}, sessions);
+  await h.send({ type: 'batchStatus', keys: ['codex:one', 'codex:two', 'missing', 'codex:one'], status: 'Done' });
+  const cards = h.latest().sessions;
+  assert.equal(cards.find(s => s.key === 'codex:one').status, 'Done');
+  assert.equal(cards.find(s => s.key === 'codex:two').status, 'Done');
+  assert.equal(cards.find(s => s.key === 'codex:other').status, 'Inbox');
+  assert.ok(cards.find(s => s.key === 'codex:one').completedAt > 0);
+  await h.send({ type: 'batchStatus', keys: ['codex:one'], status: 'In progress' });
+  assert.equal(h.latest().sessions.find(s => s.key === 'codex:one').completedAt, null);
+  await h.send({ type: 'batchStatus', keys: ['codex:two'], status: 'Invalid' });
+  assert.equal(h.latest().sessions.find(s => s.key === 'codex:two').status, 'Done');
+});
+
 async function extensionHarness(t, stored = {}, sessions = []) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-folder-test-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -17,7 +32,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
   await fs.writeFile(file, 'fixture');
   const messages = [], errors = [], pickerCalls = [], openedFolders = [], chats = [], commands = new Map(), intervals = [], timeouts = [], watchers = [], subscriptions = [];
   const storage = structuredClone(stored);
-  let receive, selectedFolder, activityResult, scanCount = 0, disposePanel;
+  let receive, selectedFolder, inputValue, activityResult, scanCount = 0, disposePanel;
   const uri = folderPath => ({ scheme: 'file', fsPath: folderPath, toString: () => folderPath });
   const vscode = {
     env: { openExternal: async value => { openedFolders.push(value.fsPath); return true; } },
@@ -27,6 +42,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
     commands: { registerCommand: (name, callback) => { commands.set(name, callback); return { dispose() {} }; } },
     window: {
       showErrorMessage: text => errors.push(text),
+      showInputBox: async options => { pickerCalls.push(options); return inputValue; },
       showOpenDialog: async options => { pickerCalls.push(options); return selectedFolder; },
       createStatusBarItem: () => ({ show() {}, dispose() {} }),
       createWebviewPanel: () => ({
@@ -62,7 +78,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
   await commands.get('chatAtlas.open')();
   await api.refresh();
   return { root, folder, file, messages, errors, pickerCalls, openedFolders, chats, storage, api, intervals, timeouts, watchers, subscriptions,
-    send: m => receive(m), pick: value => { selectedFolder = value; }, latest: () => messages.findLast(m => m.type === 'data'),
+    send: m => receive(m), pick: value => { selectedFolder = value; }, input: value => { inputValue = value; }, latest: () => messages.findLast(m => m.type === 'data'),
     setSessions: value => { sessions = value; }, setActivity: value => { activityResult = value; }, scanCount: () => scanCount };
 }
 
@@ -199,4 +215,41 @@ test('Explorer opens the selected project or known subfolder and rejects unavail
   assert.equal(h.openedFolders.length, 2);
   await h.send({ type: 'openProjectFolder', projectKey: 'custom:missing' });
   assert.match(h.messages.at(-1).text, /Link this project/);
+});
+
+
+test('Project renames persist without changing keys, folders, placements or sidebar preferences', async t => {
+  const session = { key: 'codex:rename', project: 'Original', cwd: '/original', provider: 'codex', title: 'Chat', preview: '', createdAt: 1, updatedAt: 2 };
+  const h = await extensionHarness(t, { sidebarPreferences: { projectSort: 'manual', projectOrder: ['path:/original'], hiddenProjects: [] } }, [session]);
+  h.input('  New name  ');
+  await h.send({ type: 'renameProject', projectKey: 'path:/original' });
+  assert.equal(h.latest().sessions[0].project, 'New name');
+  assert.equal(h.latest().sessions[0].cwd, '/original');
+  assert.equal(h.latest().projectCatalog[0].key, 'path:/original');
+  assert.equal(h.pickerCalls.at(-1).value, 'Original');
+  assert.match(h.pickerCalls.at(-1).validateInput(' '), /1 to 80/);
+  assert.match(h.pickerCalls.at(-1).validateInput('x'.repeat(81)), /1 to 80/);
+  assert.equal(h.pickerCalls.at(-1).validateInput('Good'), null);
+  const restarted = await extensionHarness(t, h.storage, [session]);
+  assert.equal(restarted.latest().sessions[0].project, 'New name');
+  assert.deepEqual(restarted.storage.sidebarPreferences, h.storage.sidebarPreferences);
+  restarted.input(undefined);
+  await restarted.send({ type: 'renameProject', projectKey: 'path:/original' });
+  assert.equal(restarted.latest().sessions[0].project, 'New name');
+  restarted.input(' ');
+  await restarted.send({ type: 'renameProject', projectKey: 'path:/original' });
+  assert.match(restarted.messages.at(-1).text, /1 to 80/);
+  await restarted.send({ type: 'renameProject', projectKey: 'custom:missing' });
+  assert.match(restarted.messages.at(-1).text, /unavailable/);
+});
+
+test('Renamed board projects retain their names when linked to a folder', async t => {
+  const h = await extensionHarness(t, { boardState: { customProjects: [{ id: 'label', name: 'Label' }], cards: {} } });
+  h.input('Renamed label');
+  await h.send({ type: 'renameProject', projectKey: 'custom:label' });
+  await h.send({ type: 'linkProjectFolder', projectKey: 'custom:label', folder: h.folder });
+  assert.equal(h.latest().projectCatalog[0].name, 'Renamed label');
+  h.input('Folder alias');
+  await h.send({ type: 'renameProject', projectKey: projects.originalProjectKey({ cwd: h.folder }) });
+  assert.equal(h.latest().projectCatalog[0].name, 'Folder alias');
 });

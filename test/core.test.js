@@ -13,6 +13,36 @@ const prompt = text => ({ type: 'response_item', timestamp: '2026-10-01T12:01:00
 const answer = text => ({ ...prompt(text), payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] } });
 const toolCall = workdir => ({ type: 'response_item', payload: { type: 'function_call', arguments: JSON.stringify({ workdir }) } });
 const stat = { birthtimeMs: 1, mtimeMs: 1791000000000, size: 1000 };
+test('Search index includes older messages and text beyond the detail truncation for both providers', () => {
+  for (const provider of ['codex', 'claude']) {
+    const records = [meta, prompt('Opening request'), answer('x'.repeat(13000) + ' HiddenNeedle'), ...Array.from({ length: 15 }, (_, i) => prompt(`Follow up ${i}`))];
+    const input = provider === 'codex' ? records : records.slice(1).map(r => ({ type: r.payload.role, sessionId: id, message: { content: r.payload.content } }));
+    const session = parseSession(provider, `${id}.jsonl`, input, stat);
+    assert.ok(session.searchText.includes('hiddenneedle'));
+    assert.ok(session.searchText.includes('opening request'));
+    assert.ok(!session.messages.some(m => m.text.includes('HiddenNeedle')));
+    const published = publicSessions([session], reconcile([session], {}))[0];
+    assert.equal(published.searchText, session.searchText);
+    assert.equal(published.messages, undefined);
+  }
+});
+test('Search reads the omitted middle of large transcripts, caches it and updates after append', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-search-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, `${id}.jsonl`);
+  const padding = { type: 'tool-output', value: 'x'.repeat(280000) };
+  await fs.writeFile(file, [meta, prompt('Opening request'), padding, answer('MiddleOnlyNeedle'), padding, answer('Latest reply')].map(JSON.stringify).join('\n') + '\n');
+  const index = new SessionIndex();
+  const first = await index.readSession('codex', file, await fs.stat(file));
+  assert.equal(first.sampled, true);
+  assert.ok(first.searchText.includes('middleonlyneedle'));
+  assert.ok(!first.messages.some(m => m.text.includes('MiddleOnlyNeedle')));
+  assert.equal(await index.readSession('codex', file, await fs.stat(file)), first);
+  await fs.appendFile(file, JSON.stringify(prompt('AppendedNeedle')) + '\n');
+  const next = await index.readSession('codex', file, await fs.stat(file));
+  assert.ok(next.searchText.includes('middleonlyneedle'));
+  assert.ok(next.searchText.includes('appendedneedle'));
+});
 test('Manual project sorting survives alphabetical mode and appends new projects without losing saved order', () => {
   const groups = groupProjects([{ project: 'Zulu', cwd: '/z' }, { project: 'Alpha', cwd: '/a' }, { project: 'Beta', cwd: '/b' }]);
   const keys = (mode, order) => orderedProjects(groups, mode, order).map(([key]) => key);
@@ -203,6 +233,24 @@ test('Message cleanup preserves conversation markup and removes internal citatio
   assert.equal(empty.preview, '');
   assert.equal(empty.title, 'Untitled conversation');
 });
+test('Titles skip placeholders and skill invocations without changing message text or manual titles', () => {
+  const linked = '[$impeccable](C:/Users/example/.codex/skills/impeccable/SKILL.md) Fix the chat title';
+  for (const text of [linked, '$impeccable $ponytail Fix the chat title', '[$impeccable](C:/My Skills (local)/SKILL.md) Fix the chat title']) {
+    const session = parseSession('codex', `${id}.jsonl`, [meta, prompt(text)], stat, { thread_name: ' Untitled ' });
+    assert.equal(session.title, 'Fix the chat title');
+    assert.equal(session.messages[0].text, text);
+    const state = reconcile([session], {});
+    state.cards[session.key].title = 'My custom title';
+    assert.equal(publicSessions([session], state)[0].title, 'My custom title');
+  }
+  const records = [meta, prompt('$impeccable'), prompt('<skill><name>impeccable</name><instructions>Internal instructions</instructions></skill>'), prompt('Fix the chat title')];
+  assert.equal(parseSession('codex', `${id}.jsonl`, records, stat).title, 'Fix the chat title');
+  assert.equal(parseSession('codex', `${id}.jsonl`, records, stat, { thread_name: 'Provider title' }).title, 'Provider title');
+  assert.equal(parseSession('codex', `${id}.jsonl`, [meta, prompt('Budget $100 and $PATH')], stat).title, 'Budget $100 and $PATH');
+  assert.equal(parseSession('codex', `${id}.jsonl`, [meta, prompt('$100 budget')], stat).title, '$100 budget');
+  const claude = [{ type: 'user', sessionId: id, message: { content: linked } }, { type: 'custom-title', customTitle: 'New chat' }];
+  assert.equal(parseSession('claude', `${id}.jsonl`, claude, stat).title, 'Fix the chat title');
+});
 test('Claude previews the latest assistant or user message rather than the opening prompt', () => {
   const user = { type: 'user', sessionId: id, message: { content: 'Create dashboard layout' } };
   const assistant = { type: 'assistant', sessionId: id, message: { content: [{ type: 'text', text: 'The dashboard layout is ready.' }] } };
@@ -238,6 +286,10 @@ test('Scanner tolerates incomplete lines, updates cached files, applies index ti
   await fs.appendFile(file, '\n' + JSON.stringify(prompt('Follow-up')) + '\n');
   r = await index.scan(opts); assert.equal(r.sessions[0].messages.at(-1).text, 'Follow-up');
   assert.equal(r.sessions[0].preview, 'Follow-up');
+  await fs.writeFile(path.join(dir, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Untitled conversation' }));
+  r = await index.scan(opts); assert.equal(r.sessions[0].title, 'Initial task');
+  await fs.writeFile(path.join(dir, 'session_index.jsonl'), JSON.stringify({ id, thread_name: '[$impeccable](skill://impeccable) Human title' }));
+  r = await index.scan(opts); assert.equal(r.sessions[0].title, 'Human title');
 });
 test('Bounded samples retain the start and end without interpreting partial records', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-sample-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));

@@ -31,7 +31,7 @@ function linkProjectFolder(state, previousKey, cwd) {
   }
   return key;
 }
-function projectCatalog(sessions, customProjects = []) {
+function projectCatalog(sessions, customProjects = [], projectNames = {}) {
   const catalog = new Map();
   for (const session of sessions) {
     const key = originalProjectKey(session);
@@ -41,7 +41,7 @@ function projectCatalog(sessions, customProjects = []) {
     const key = item.cwd ? originalProjectKey(item) : `custom:${item.id}`;
     catalog.set(key, { key, name: item.name, cwd: item.cwd || '', created: true });
   }
-  return [...catalog.values()];
+  return [...catalog.values()].map(project => ({ ...project, name: projectNames[project.key] || project.name }));
 }
 function effectiveSubfolder(session, available = []) {
   const value = session.subfolder == null ? session.projectOverride ? '' : session.subfolderHint : session.subfolder;

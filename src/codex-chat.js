@@ -51,7 +51,8 @@ async function createCodexProjectChat(binary, cwd, options = {}) {
   } finally {
     clearTimeout(timeout); child.stdin.end();
     const stop = setTimeout(() => child.kill(), 1000);
-    await closed; clearTimeout(stop); reader.close();
+    // The persisted thread can open while its helper shuts down.
+    void closed.then(() => { clearTimeout(stop); reader.close(); });
   }
 }
 module.exports = { codexBinary, createCodexProjectChat };

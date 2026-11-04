@@ -1,5 +1,7 @@
 'use strict';
 const fs = require('node:fs/promises');
+const { createReadStream } = require('node:fs');
+const { createInterface } = require('node:readline');
 const path = require('node:path');
 const { originalProjectKey, projectCatalog } = require('../media/projects');
 
@@ -28,6 +30,12 @@ function cleanMessage(text) {
 }
 function isHumanPrompt(text) {
   return text && !/^(# AGENTS\.md|<INSTRUCTIONS>|<environment_context>|<permissions instructions>|<system-reminder>|\[Request interrupted)/i.test(text.trim());
+}
+function conversationTitle(text) {
+  if (typeof text !== 'string' || /^\s*<skill>/i.test(text)) return '';
+  const title = text.replace(/\[\$[^\]]+\]\((?:[^()]|\([^)]*\))*\)/g, '')
+    .replace(/^\s*(?:\$[a-z_][\w:-]*(?:\s+|$))+/i, '').replace(/\s+/g, ' ').trim();
+  return /^(?:untitled(?: conversation| chat)?|new chat)$/i.test(title) ? '' : title;
 }
 function turnActivity(provider, records, lastWriteAt, previous = {}) {
   let active = previous.activeTurnSignal ?? null, terminal = previous.activeTurnClosed === true, activityAt = previous.activeTurnAt || 0;
@@ -119,6 +127,31 @@ function classify(title, preview, topics = DEFAULT_TOPICS) {
   }
   return best;
 }
+function conversationText(provider, r) {
+  if (!r || typeof r !== 'object') return null;
+  const p = r.payload;
+  let role, content;
+  if (provider === 'codex' && r.type === 'response_item' && p?.type === 'message') { role = p.role; content = textOf(p.content); }
+  if (provider === 'claude' && ['user', 'assistant'].includes(r.type)) { role = r.type; content = textOf(r.message?.content); }
+  if (!['user', 'assistant'].includes(role)) return null;
+  content = cleanMessage(content);
+  if (!content || (role === 'user' && !isHumanPrompt(content))) return null;
+  return { role, text: content, timestamp: r.timestamp || '' };
+}
+async function fullSearchText(provider, file) {
+  const input = createReadStream(file, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  const parts = [];
+  try {
+    for await (const line of lines) {
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      const message = conversationText(provider, record);
+      if (message) parts.push(message.text.toLowerCase());
+    }
+  } finally { lines.close(); input.destroy(); }
+  return parts.join('\n');
+}
 function parseSession(provider, file, records, stat, titleEntry) {
   const meta = records.find(r => r.type === 'session_meta')?.payload;
   if (provider === 'codex' && (meta?.source?.subagent || meta?.thread_source?.subagent)) return null;
@@ -127,25 +160,23 @@ function parseSession(provider, file, records, stat, titleEntry) {
   if (!UUID.test(id || '')) return null;
   const cwd = meta?.cwd || records.find(r => typeof r.cwd === 'string')?.cwd || '';
   const messages = [];
+  const searchParts = [];
   for (const r of records) {
-    const p = r.payload;
-    let role, content;
-    if (provider === 'codex' && r.type === 'response_item' && p?.type === 'message') { role = p.role; content = textOf(p.content); }
-    if (provider === 'claude' && ['user', 'assistant'].includes(r.type)) { role = r.type; content = textOf(r.message?.content); }
-    if (!['user', 'assistant'].includes(role)) continue;
-    content = cleanMessage(content);
-    if (!content || (role === 'user' && !isHumanPrompt(content))) continue;
+    const message = conversationText(provider, r);
+    if (!message) continue;
+    const { role, text: content } = message;
+    searchParts.push(content.toLowerCase());
     if (messages.at(-1)?.text === content) continue;
     messages.push({ role, text: content.slice(0, 12000), timestamp: r.timestamp || '' });
   }
-  const first = messages.find(m => m.role === 'user')?.text || '';
+  const first = messages.filter(m => m.role === 'user').map(m => conversationTitle(m.text)).find(Boolean) || '';
   const customTitle = [...records].reverse().find(r => r.type === 'custom-title')?.customTitle;
   const summary = [...records].reverse().find(r => r.type === 'summary')?.summary;
-  const title = titleEntry?.thread_name || customTitle || summary || first.replace(/\s+/g, ' ').slice(0, 100) || 'Untitled conversation';
+  const title = conversationTitle(titleEntry?.thread_name) || conversationTitle(customTitle) || conversationTitle(summary) || first.slice(0, 100) || 'Untitled conversation';
   const createdAt = dateMs(meta?.timestamp || records.find(r => r.timestamp)?.timestamp, stat.birthtimeMs || stat.mtimeMs);
   return { key: `${provider}:${id}`, id, provider, title, cwd, project: projectName(cwd), subfolderHint: subfolderHint(records, cwd), ...turnActivity(provider, records, stat.mtimeMs), lastWriteAt: stat.mtimeMs, createdAt,
     updatedAt: Math.max(stat.mtimeMs, dateMs(titleEntry?.updated_at)), preview: (messages.at(-1)?.text || '').slice(0, 700),
-    messages: messages.slice(-12), file, sampled: stat.size > 384 * 1024 };
+    searchText: searchParts.join('\n'), messages: messages.slice(-12), file, sampled: stat.size > 384 * 1024 };
 }
 async function sample(file, size) {
   const handle = await fs.open(file, 'r');
@@ -191,6 +222,7 @@ class SessionIndex {
     let cached = this.cache.get(file);
     if (!cached || cached.mtime !== stat.mtimeMs || cached.size !== stat.size) {
       const session = parseSession(provider, file, await sample(file, stat.size), stat);
+      if (session?.sampled) session.searchText = await fullSearchText(provider, file);
       const evidenceAt = session?.activeTurnAt || 0;
       const missingEvidence = session?.activeTurnSignal === null;
       // A partial append or an oversized record can leave no complete activity evidence.
@@ -250,7 +282,7 @@ class SessionIndex {
               const session = await this.readSession(provider, file, stat);
               if (session) {
                 const s = { ...session }, title = titles.get(s.id);
-                if (title?.thread_name) s.title = title.thread_name;
+                s.title = conversationTitle(title?.thread_name) || s.title;
                 if (title?.updated_at) s.updatedAt = Math.max(s.updatedAt, dateMs(title.updated_at));
                 sessions.push(s); count++;
               }
@@ -280,7 +312,7 @@ function reconcile(sessions, state) {
   return state;
 }
 function publicSessions(sessions, state, now = Date.now(), runningTimeoutMs = DEFAULT_RUNNING_TIMEOUT_MS) {
-  const projects = new Map(projectCatalog(sessions, state.customProjects || []).map(p => [p.key, p]));
+  const projects = new Map(projectCatalog(sessions, state.customProjects || [], state.projectNames).map(p => [p.key, p]));
   return sessions.map(({ file, messages, activeTurnSignal, activeTurnAt, activeTurnClosed, lastWriteAt, ...s }) => {
     const { projectOverride, ...card } = state.cards[s.key] || {};
     const target = projects.get(projectOverride);

@@ -5,7 +5,7 @@ const { EventEmitter } = require('node:events');
 const { PassThrough, Writable } = require('node:stream');
 const { createCodexProjectChat } = require('../src/codex-chat');
 const id = '12345678-1234-1234-1234-123456789abc';
-function runtime(reply) {
+function runtime(reply, closeOnEnd = true) {
   const messages = [], child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.kill = () => { child.killed = true; child.emit('exit', 0); child.emit('close', 0); };
@@ -15,7 +15,7 @@ function runtime(reply) {
       const response = reply(message);
       if (response) queueMicrotask(() => child.stdout.write(JSON.stringify({ id: message.id, ...response }) + '\n'));
       callback();
-    }, final(callback) { queueMicrotask(() => child.emit('close', 0)); callback(); }
+    }, final(callback) { if (closeOnEnd) queueMicrotask(() => child.emit('close', 0)); callback(); }
   });
   return { child, messages, spawn: (binary, args, options) => { child.launch = { binary, args, options }; return child; } };
 }
@@ -33,6 +33,19 @@ test('Project thread creation persists the selected cwd without a model turn or 
   assert.equal(r.child.launch.options.cwd, session.cwd);
   assert.deepEqual(r.child.launch.args, ['app-server', '--stdio']);
   assert.equal(r.child.stdin.writableEnded, true);
+});
+
+test('A persisted chat is ready to open before the helper process finishes shutting down', async () => {
+  const r = runtime(message => ({ result: message.method === 'thread/start' ? { thread: { id, cwd: message.params.cwd } } : {} }), false);
+  let ready = false;
+  const creation = createCodexProjectChat('codex-runtime', 'C:/target', { spawn: r.spawn }).then(session => { ready = true; return session; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(ready, true, 'Opening the chat must not wait for process shutdown');
+    assert.equal(r.child.stdin.writableEnded, true);
+    assert.equal(r.child.killed, undefined);
+    assert.equal((await creation).id, id);
+  } finally { r.child.kill(); await creation; }
 });
 test('Wrong cwd and invalid session IDs fail before persisting or opening a chat', async () => {
   for (const thread of [{ id, cwd: 'C:/wrong' }, { id: 'bad-id', cwd: 'C:/target' }]) {

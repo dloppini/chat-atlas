@@ -2,7 +2,7 @@
   "name": "lpx-conversation-board",
   "displayName": "Chat Atlas by LPX",
   "description": "A local conversation organizer with project filters, topic boards, workflow status, and a timeline.",
-  "version": "0.1.16",
+  "version": "0.1.19",
   "publisher": "lpx",
   "author": {
     "name": "LPX"

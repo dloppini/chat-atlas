@@ -17,6 +17,8 @@ let hiddenProjects = Array.isArray(saved.hiddenProjects) ? saved.hiddenProjects 
 let showSubfolders = saved.showSubfolders === true;
 let sidebarPreferencesLoaded = false;
 const columnScroll = new Map();
+const batchSelection = new Set();
+const statuses = ['Inbox', 'In progress', 'Waiting', 'Done'];
 const $ = id => document.getElementById(id);
 const send = message => host.postMessage(message);
 function captureScrollPosition() {
@@ -174,6 +176,11 @@ function card(s) {
   c.dataset.key = s.key; c.draggable = true;
   c.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', s.key); e.dataTransfer.effectAllowed = 'move'; });
   const meta = el('div', 'card-meta');
+  const pick = el('input', 'task-select'); pick.type = 'checkbox'; pick.checked = batchSelection.has(s.key);
+  pick.dataset.action = 'batch'; pick.setAttribute('aria-label', `Select ${s.title}`);
+  pick.addEventListener('change', () => { if (pick.checked) batchSelection.add(s.key); else batchSelection.delete(s.key); render(); });
+  meta.append(pick);
+  c.classList.toggle('batch-selected', batchSelection.has(s.key));
   meta.append(el('span', `provider-icon ${s.provider}`, s.provider === 'codex' ? 'C' : '✳'), el('span', '', providerName(s.provider)));
   const time = el('time', '', shortDate(s.createdAt)); time.dateTime = new Date(s.createdAt).toISOString(); time.title = `Created ${fullDate(s.createdAt)} · Last activity ${fullDate(s.updatedAt)}`; meta.append(time);
   const title = button(s.title, 'card-open', () => select(s, true), `Resume ${s.title}`); title.dataset.action = 'open';
@@ -300,10 +307,14 @@ function render(pageScroll = captureScrollPosition()) {
   $('focus-strip').replaceChildren(el('span', '', 'PINNED'), ...pins.map(s => button(`★ ${s.title}`, `focus-item${s.key === selected ? ' selected' : ''}`, () => select(s, true), `Resume ${s.title}`)));
   $('errors').textContent = data.errors.join(' ');
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const visible = scoped.filter(s => (provider === 'all' || s.provider === provider) && (showDone || s.status !== 'Done') && words.every(word => `${s.title} ${s.preview} ${s.project} ${effectiveSubfolder(s, data.subfolders?.[projectGroupKey(s)] || [])} ${s.note} ${data.topics.find(t => t.id === s.topic)?.name || ''}`.toLowerCase().includes(word))).sort((a, b) => b.createdAt - a.createdAt || a.key.localeCompare(b.key));
+  const visible = scoped.filter(s => (provider === 'all' || s.provider === provider) && (showDone || s.status !== 'Done') && words.every(word => (s.searchText || '').includes(word) || `${s.title} ${s.preview} ${s.project} ${effectiveSubfolder(s, data.subfolders?.[projectGroupKey(s)] || [])} ${s.note} ${data.topics.find(t => t.id === s.topic)?.name || ''}`.toLowerCase().includes(word))).sort((a, b) => b.createdAt - a.createdAt || a.key.localeCompare(b.key));
   const groups = view === 'topics' ? data.topics.map(t => ({ id: t.id, name: t.name, sessions: visible.filter(s => s.topic === t.id) })) : view === 'workflow' ? ['Inbox', 'In progress', 'Waiting', 'Done'].map(status => ({ id: status, name: status, sessions: visible.filter(s => s.status === status) })) : [...new Set(visible.map(s => new Date(s.createdAt).toLocaleDateString()))].map(day => ({ id: day, name: day, sessions: visible.filter(s => new Date(s.createdAt).toLocaleDateString() === day) }));
   if (focusedGroup && !data.busy && !groups.some(g => g.id === focusedGroup)) { focusedGroup = ''; persist(); }
   const shownGroups = focusedGroup ? groups.filter(g => g.id === focusedGroup) : groups;
+  const selectable = new Set(shownGroups.flatMap(g => g.sessions.map(s => s.key)));
+  for (const key of batchSelection) if (!selectable.has(key)) batchSelection.delete(key);
+  $('batch-actions').hidden = !batchSelection.size;
+  $('batch-count').textContent = `${batchSelection.size} selected`;
   $('visible-count').textContent = `${focusedGroup ? shownGroups.reduce((n, g) => n + g.sessions.length, 0) : visible.length} conversations shown`;
   $('focus-strip').hidden = pins.length === 0 || !!focusedGroup;
   board.className = `board${view === 'timeline' ? ' timeline' : ''}${focusedGroup ? ' focused' : ''}`;
@@ -321,7 +332,16 @@ function render(pageScroll = captureScrollPosition()) {
     const head = el('div', 'column-head');
     const focus = button(focusedGroup ? 'Exit focus' : 'Focus', 'column-focus quiet', () => focusGroup(focusedGroup ? '' : group.id), focusedGroup ? 'Exit focus mode (Escape)' : `Focus on ${group.name}`);
     focus.setAttribute('aria-pressed', String(!!focusedGroup));
-    head.append(el('span', 'topic-dot'), el('h2', '', group.name), el('span', 'count', String(group.sessions.length)), focus); column.append(head);
+    const pickAll = el('input', 'section-select'); pickAll.type = 'checkbox';
+    const count = group.sessions.filter(s => batchSelection.has(s.key)).length;
+    pickAll.checked = !!group.sessions.length && count === group.sessions.length;
+    pickAll.indeterminate = count > 0 && count < group.sessions.length;
+    pickAll.disabled = !group.sessions.length;
+    pickAll.dataset.groupSelect = group.id;
+    pickAll.title = `${pickAll.checked ? 'Deselect' : 'Select'} all in ${group.name}`;
+    pickAll.setAttribute('aria-label', pickAll.title);
+    pickAll.addEventListener('change', () => { for (const s of group.sessions) { if (pickAll.checked) batchSelection.add(s.key); else batchSelection.delete(s.key); } render(); [...board.querySelectorAll('.section-select')].find(n => n.dataset.groupSelect === group.id)?.focus({ preventScroll: true }); });
+    head.append(pickAll, el('span', 'topic-dot'), el('h2', '', group.name), el('span', 'count', String(group.sessions.length)), focus); column.append(head);
     const list = el('div', 'column-cards'); list.append(...group.sessions.map(card));
     if (!group.sessions.length) list.append(el('div', 'empty-column', view === 'workflow' && group.id === 'Done' && !showDone ? 'Tick “Show done” to see finished chats.' : focusedGroup ? 'No conversations match the current filters in this group.' : 'Drop a conversation here'));
     column.append(list);
@@ -450,6 +470,7 @@ $('sidebar-toggle').addEventListener('click', () => { sidebarHidden = !sidebarHi
 $('project-sort').addEventListener('change', e => { projectSort = e.target.value; persistSidebar(); render(); });
 $('new-project').addEventListener('click', () => openProjectDialog());
 $('open-project-folder').addEventListener('click', () => send({ type: 'openProjectFolder', projectKey: project, subfolder: subfolderFilter || '' }));
+$('rename-project').addEventListener('click', () => send({ type: 'renameProject', projectKey: project }));
 $('link-project-folder').addEventListener('click', () => openProjectDialog('', project));
 $('browse-project-folder').addEventListener('click', () => send({ type: 'pickProjectFolder', requestId: ++folderRequestId, folder: $('project-folder').value }));
 $('cancel-project').addEventListener('click', () => $('project-dialog').close());
@@ -495,5 +516,12 @@ document.addEventListener('keydown', e => {
     if (!$('detail').hidden) closeDetail();
     else if (focusedGroup) focusGroup('');
   }
+});
+$('batch-clear').addEventListener('click', () => { batchSelection.clear(); render(); });
+$('batch-apply').addEventListener('click', () => {
+  const status = $('batch-status').value;
+  if (!statuses.includes(status) || !batchSelection.size) return;
+  send({ type: 'batchStatus', keys: [...batchSelection], status });
+  batchSelection.clear(); render();
 });
 render(); send({ type: 'ready' });
