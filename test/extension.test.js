@@ -41,6 +41,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
     workspace: { onDidGrantWorkspaceTrust: () => ({ dispose() {} }), workspaceFolders: [{ uri: uri(root) }], getConfiguration: () => ({ get: (key, fallback) => key === 'codexHome' ? path.join(root, 'codex') : key === 'claudeHome' ? path.join(root, 'claude') : fallback }) },
     commands: { registerCommand: (name, callback) => { commands.set(name, callback); return { dispose() {} }; } },
     window: {
+      registerWebviewPanelSerializer: () => ({ dispose() {} }),
       showErrorMessage: text => errors.push(text),
       showInputBox: async options => { pickerCalls.push(options); return inputValue; },
       showOpenDialog: async options => { pickerCalls.push(options); return selectedFolder; },
@@ -66,6 +67,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
       } };
       if (name === 'node:fs') return { watch: (root, options, callback) => { const watcher = { root, options, callback, on() {}, close() { this.closed = true; } }; watchers.push(watcher); return watcher; } };
       if (name === './providers') return { openNewProjectChat: (...args) => chats.push(args.slice(1, 3)), resumePendingProjectChats: async () => {} };
+      if (name === './git') return require('../src/git');
       if (name === '../media/projects') return projects;
       return require(name);
     }
@@ -252,4 +254,15 @@ test('Renamed board projects retain their names when linked to a folder', async 
   h.input('Folder alias');
   await h.send({ type: 'renameProject', projectKey: projects.originalProjectKey({ cwd: h.folder }) });
   assert.equal(h.latest().projectCatalog[0].name, 'Folder alias');
+});
+
+test('Git dashboard rejects unknown project keys and correlates error replies', async t => {
+  const h = await extensionHarness(t);
+  await h.send({ type: 'gitDashboard', projectKey: 'unknown', requestId: 42 });
+  const reply = h.messages.at(-1);
+  assert.equal(reply.type, 'gitDashboard');
+  assert.equal(reply.projectKey, 'unknown');
+  assert.equal(reply.requestId, 42);
+  assert.match(reply.error, /Link this project/);
+  assert.equal(h.errors.length, 0);
 });

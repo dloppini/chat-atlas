@@ -4,9 +4,10 @@ const fs = require('node:fs/promises');
 const { watch } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { readGitDashboard, readGitDiff } = require('./git');
 const crypto = require('node:crypto');
 const { SessionIndex, reconcile, publicSessions, UUID } = require('./core');
-const { openNativeSession, openNewProjectChat } = require('./providers');
+const { openNativeSession, openNewProjectChat, resumePendingProjectChats } = require('./providers');
 const { projectGroupKey, originalProjectKey, projectCatalog, linkProjectFolder, remapProjectKeys } = require('../media/projects');
 
 function activate(context) {
@@ -22,10 +23,10 @@ function activate(context) {
     const c = vscode.workspace.getConfiguration('chatAtlas');
     return { codexHome: c.get('codexHome') || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claudeHome: c.get('claudeHome') || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), maxSessions: c.get('maxSessions', 1000) };
   }
-  const visibleSessions = () => {
+  const visibleSessions = (sessions = current.sessions) => {
     const minutes = vscode.workspace.getConfiguration('chatAtlas').get('runningTimeoutMinutes', 60);
     const timeout = Number.isFinite(minutes) ? Math.max(5, Math.min(1440, minutes)) * 60000 : 60 * 60000;
-    return publicSessions(current.sessions, state, Date.now(), timeout);
+    return publicSessions(sessions, state, Date.now(), timeout);
   };
   const publish = () => {
     const sessions = visibleSessions();
@@ -114,7 +115,7 @@ function activate(context) {
   async function openSession(s, editor = false, terminalOnly = false) {
     if (!UUID.test(s.id)) throw new Error('Invalid session identifier.');
     if (!terminalOnly) {
-      if (await openNativeSession(vscode, s, editor)) return;
+      if (await openNativeSession(vscode, s, editor, providerOptions())) return;
       throw new Error(`The ${s.provider === 'claude' ? 'Claude Code' : 'Codex'} chat UI is unavailable. Choose "Start in hidden terminal" if you want the CLI.`);
     }
     const command = s.provider === 'claude' ? `claude --resume ${s.id}` : `codex resume ${s.id}`;
@@ -129,6 +130,17 @@ function activate(context) {
     const terminal = vscode.window.createTerminal({ name: `Atlas: ${s.id.slice(0, 8)}`, cwd });
     terminal.sendText(command, true);
     post({ type: 'notice', text: `Started ${s.provider === 'claude' ? 'Claude Code' : 'Codex'} in a hidden terminal. Open the Terminal panel to interact with it.` });
+  }
+  function providerOptions() {
+    return {
+      globalState: context.globalState,
+      workspaceState: context.workspaceState,
+      beforeWorkspaceSwitch: async () => {
+        const { sessions } = await index.scan(settings());
+        if (visibleSessions(sessions).some(session => session.running)) throw new Error('Wait for running chats to finish before switching Claude projects. VS Code needs to reload this window to change Claude\'s project folder.');
+        await writeQueue;
+      }
+    };
   }
   async function onMessage(m) {
     if (!m || typeof m.type !== 'string') return;
@@ -184,13 +196,24 @@ function activate(context) {
         if (!await vscode.env.openExternal(vscode.Uri.file(folder))) throw new Error('Windows Explorer could not open the folder.');
         return;
       }
+      if (m.type === 'gitDashboard' || m.type === 'gitDiff') {
+        try {
+          const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
+          if (!project?.cwd) throw new Error('Link this project to a folder to view its Git repository.');
+          const cwd = await validateProjectFolder(project.cwd, true);
+          post({ type: m.type, projectKey: m.projectKey, requestId: m.requestId, ...(m.type === 'gitDiff' ? { diff: await readGitDiff(cwd, m) } : { dashboard: await readGitDashboard(cwd) }) });
+        } catch (error) {
+          post({ type: m.type, projectKey: m.projectKey, requestId: m.requestId, error: error.message });
+        }
+        return;
+      }
       if (m.type === 'newChat') {
         const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
         if (!project?.cwd) throw new Error('Link this project to an existing folder before starting a chat.');
         let stat;
         try { stat = await fs.stat(project.cwd); } catch { throw new Error('The project folder is unavailable.'); }
         if (!stat.isDirectory()) throw new Error('The project path must be a folder.');
-        await openNewProjectChat(vscode, m.provider, project.cwd, { codexHome: settings().codexHome, projectName: project.name });
+        await openNewProjectChat(vscode, m.provider, project.cwd, { ...providerOptions(), codexHome: settings().codexHome, projectName: project.name });
         return;
       }
       if (m.type === 'renameProject') {
@@ -267,9 +290,11 @@ function activate(context) {
       vscode.window.showErrorMessage(`Chat Atlas: ${e.message}`);
     }
   }
-  async function open() {
+  async function open(restoredPanel) {
     if (panel) { panel.reveal(); void refresh(); return; }
-    panel = vscode.window.createWebviewPanel('chatAtlas.board', 'Chat Atlas', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] });
+    const webviewOptions = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
+    panel = restoredPanel || vscode.window.createWebviewPanel('chatAtlas.board', 'Chat Atlas', vscode.ViewColumn.One, { ...webviewOptions, retainContextWhenHidden: true });
+    panel.webview.options = webviewOptions;
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png');
     const webview = panel.webview;
     let html = await fs.readFile(path.join(context.extensionPath, 'media', 'board.html'), 'utf8');
@@ -290,7 +315,12 @@ function activate(context) {
   }
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
   status.text = '$(layout) Chat Atlas'; status.command = 'chatAtlas.open'; status.tooltip = 'Open your conversation board'; status.show();
-  context.subscriptions.push(status, vscode.commands.registerCommand('chatAtlas.open', open), vscode.commands.registerCommand('chatAtlas.refresh', refresh), { dispose() { disposed = true; clearInterval(timer); clearInterval(activityTimer); closeHistoryWatchers(); panel?.dispose(); } });
+  const resumeClaude = () => resumePendingProjectChats(vscode, providerOptions()).catch(error => vscode.window.showErrorMessage(`Chat Atlas: ${error.message}`));
+  context.subscriptions.push(status, vscode.commands.registerCommand('chatAtlas.open', () => open()), vscode.commands.registerCommand('chatAtlas.refresh', refresh),
+    vscode.window.registerWebviewPanelSerializer('chatAtlas.board', { deserializeWebviewPanel: restored => open(restored) }),
+    vscode.workspace.onDidGrantWorkspaceTrust(resumeClaude),
+    { dispose() { disposed = true; clearInterval(timer); clearInterval(activityTimer); closeHistoryWatchers(); panel?.dispose(); } });
+  void resumeClaude();
   return { refresh, getSnapshot: () => ({ ...current, sessions: visibleSessions(), topics: state.topics }) };
 }
 module.exports = { activate };

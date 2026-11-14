@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { classify, parseSession, reconcile, SessionIndex, sample, publicSessions } = require('../src/core');
-const { openNativeSession, openNewProjectChat } = require('../src/providers');
+const { openNativeSession, openNewProjectChat, resumePendingProjectChats } = require('../src/providers');
 const { canonicalProjectPath, originalProjectKey, projectGroupKey, projectCatalog, linkProjectFolder, remapProjectKeys, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject } = require('../media/projects');
 const id = '12345678-1234-1234-1234-123456789abc';
 const meta = { type: 'session_meta', payload: { id, cwd: 'C:/Code/example', timestamp: '2026-10-01T12:00:00Z' } };
@@ -323,12 +323,14 @@ async function newChatFixture(t, cwd = 'C:/Code/chat-atlas') {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-chat-test-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const calls = [], storage = new Map();
+  const workspaceStorage = new Map();
   const context = { findBinary: async () => 'fixture-codex', createChat: async (_binary, cwd) => ({ provider: 'codex', id, cwd }), globalStorageUri: { fsPath: root }, globalState: { get: (key, fallback) => storage.get(key) ?? fallback, update: async (key, value) => { storage.set(key, value); } } };
+  context.workspaceState = { get: key => workspaceStorage.get(key), update: async (key, value) => { workspaceStorage.set(key, value); } };
   const vscode = {
-    workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: cwd } }], getConfiguration: () => ({ get: (_key, fallback) => fallback }) },
+    workspace: { onDidChangeWorkspaceFolders: () => ({ dispose() {} }), workspaceFolders: [{ uri: { scheme: 'file', fsPath: cwd } }], getConfiguration: () => ({ get: (_key, fallback) => fallback }) },
     extensions: { getExtension: () => ({ activate: async () => {} }) },
     commands: {
-      getCommands: async () => ['chatgpt.openSidebar', 'chatgpt.newChat', 'claude-vscode.editor.open'],
+      getCommands: async () => ['chatgpt.openSidebar', 'chatgpt.newChat', 'claude-vscode.editor.open', 'claude-vscode.sidebar.open', 'claude-vscode.newConversation'],
       executeCommand: async (...args) => calls.push(args)
     },
     Uri: { file: fsPath => ({ scheme: 'file', fsPath }), parse: value => value },
@@ -343,7 +345,7 @@ test('Codex pins the selected cwd even in the current project and Claude uses it
   assert.deepEqual(calls, [['openExternal', `vscode://openai.chatgpt/local/${id}`]]);
   calls.length = 0;
   await openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', context);
-  assert.deepEqual(calls, [['claude-vscode.editor.open']]);
+  assert.deepEqual(calls, [['claude-vscode.sidebar.open'], ['claude-vscode.newConversation']]);
   assert.equal(storage.size, 0);
   await assert.rejects(openNewProjectChat(vscode, 'invalid', 'C:/Code/chat-atlas', context), /Invalid new-chat target/);
 });
@@ -371,10 +373,116 @@ test('Codex creates a project chat in the background and opens its native sideba
   await assert.rejects(openNewProjectChat(vscode, 'codex', 'C:/Code/other', options), /Could not create thread/);
   assert.deepEqual(calls, []);
 });
-test('Claude does not launch in the wrong folder or change the workspace', async t => {
-  const { vscode, calls } = await newChatFixture(t);
-  const folders = structuredClone(vscode.workspace.workspaceFolders);
-  await assert.rejects(openNewProjectChat(vscode, 'claude', 'C:/Code/other'), /Use Codex here/);
+test('Claude switches the first workspace root in this window, preserving all roots and labels', async t => {
+  const { vscode, calls, context, storage } = await newChatFixture(t);
+  const target = path.join(context.globalStorageUri.fsPath, 'Project B');
+  await fs.mkdir(target);
+  const original = vscode.workspace.workspaceFolders[0];
+  original.name = 'Original label';
+  vscode.env.sessionId = 'window-a';
+  const updates = [];
+  vscode.workspace.updateWorkspaceFolders = (...args) => { updates.push(args); return true; };
+  await openNewProjectChat(vscode, 'claude', target, context);
+  assert.deepEqual(updates, [[0, 1, { uri: { scheme: 'file', fsPath: target } }, original]]);
   assert.deepEqual(calls, []);
-  assert.deepEqual(vscode.workspace.workspaceFolders, folders);
+  assert.equal(storage.get('claudeProjectOpen:window-a').cwd, target);
+  await assert.rejects(openNewProjectChat(vscode, 'claude', target, context), /already in progress/);
+  assert.equal(updates.length, 1);
+  vscode.workspace.workspaceFolders = updates[0].slice(2);
+  vscode.workspace.isTrusted = true;
+  await resumePendingProjectChats(vscode, context);
+  assert.deepEqual(calls, [['workbench.action.reloadWindow']]);
+  calls.length = 0;
+  vscode.env.sessionId = 'window-a-after-reload';
+  await resumePendingProjectChats(vscode, context);
+  assert.deepEqual(calls, [['claude-vscode.sidebar.open'], ['claude-vscode.newConversation']]);
+  await resumePendingProjectChats(vscode, context);
+  assert.equal(calls.length, 2);
+});
+
+test('Claude resume handoff retains its exact ID and editor choice and reorders without duplicate roots', async t => {
+  const { vscode, calls, context } = await newChatFixture(t);
+  const target = context.globalStorageUri.fsPath;
+  const oldRoot = vscode.workspace.workspaceFolders[0];
+  const nextRoot = { uri: { scheme: 'file', fsPath: target }, name: 'Project label' };
+  vscode.workspace.workspaceFolders.push(nextRoot);
+  vscode.env.sessionId = 'window-a';
+  vscode.workspace.updateWorkspaceFolders = (_start, _count, ...folders) => { vscode.workspace.workspaceFolders = folders; return true; };
+  await openNativeSession(vscode, { provider: 'claude', id, cwd: target }, true, context);
+  assert.deepEqual(vscode.workspace.workspaceFolders, [nextRoot, oldRoot]);
+  assert.deepEqual(calls, []);
+  vscode.workspace.isTrusted = true;
+  await resumePendingProjectChats(vscode, context);
+  assert.deepEqual(calls, [['workbench.action.reloadWindow']]);
+  calls.length = 0;
+  await resumePendingProjectChats(vscode, context);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'claude-vscode.editor.open');
+  assert.equal(calls[0][1], id);
+  assert.equal(calls[0][6], undefined);
+});
+
+test('Claude handoffs isolate windows, wait for trust, expire, and clean up failed workspace changes', async t => {
+  const { vscode, calls, context, storage } = await newChatFixture(t);
+  const target = context.globalStorageUri.fsPath;
+  vscode.env.sessionId = 'window-a';
+  vscode.workspace.updateWorkspaceFolders = () => true;
+  await openNewProjectChat(vscode, 'claude', target, context);
+  vscode.workspace.workspaceFolders[0].uri.fsPath = target;
+  vscode.workspace.isTrusted = true;
+  vscode.env.sessionId = 'window-b';
+  await resumePendingProjectChats(vscode, context);
+  assert.deepEqual(calls, []);
+  vscode.env.sessionId = 'window-a';
+  vscode.workspace.isTrusted = false;
+  await resumePendingProjectChats(vscode, context);
+  assert.ok(storage.get('claudeProjectOpen:window-a'));
+  storage.get('claudeProjectOpen:window-a').createdAt -= 120001;
+  await resumePendingProjectChats(vscode, context);
+  assert.equal(storage.get('claudeProjectOpen:window-a'), undefined);
+  vscode.workspace.workspaceFolders[0].uri.fsPath = 'C:/elsewhere';
+  vscode.workspace.updateWorkspaceFolders = () => false;
+  await assert.rejects(openNewProjectChat(vscode, 'claude', target, context), /could not select/);
+  assert.equal(storage.get('claudeProjectOpen:window-a'), undefined);
+  await assert.rejects(openNewProjectChat(vscode, 'claude', path.join(target, 'missing'), context), /folder is unavailable/);
+  assert.deepEqual(calls, []);
+});
+
+test('Claude accepts an already-primary root in a multi-root workspace and preserves busy work', async t => {
+  const { vscode, calls, context } = await newChatFixture(t);
+  vscode.workspace.workspaceFolders.push({ uri: { scheme: 'file', fsPath: context.globalStorageUri.fsPath } });
+  await openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', context);
+  assert.deepEqual(calls, [['claude-vscode.sidebar.open'], ['claude-vscode.newConversation']]);
+  calls.length = 0;
+  vscode.env.sessionId = 'window-a';
+  context.beforeWorkspaceSwitch = async () => { throw new Error('Running chat'); };
+  vscode.workspace.updateWorkspaceFolders = () => assert.fail('Must not interrupt a running chat');
+  await assert.rejects(openNewProjectChat(vscode, 'claude', context.globalStorageUri.fsPath, context), /Running chat/);
+  assert.deepEqual(calls, []);
+});
+
+test('Claude serializes concurrent switches and reload failures clear the destination handoff', async t => {
+  const { vscode, context, storage } = await newChatFixture(t);
+  const target = context.globalStorageUri.fsPath;
+  vscode.env.sessionId = 'window-concurrent';
+  let release, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  context.beforeWorkspaceSwitch = () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  let changed, disposed = false;
+  vscode.workspace.onDidChangeWorkspaceFolders = callback => { changed = callback; return { dispose() { disposed = true; } }; };
+  vscode.workspace.updateWorkspaceFolders = (_start, _count, ...folders) => { vscode.workspace.workspaceFolders = folders; return true; };
+  const first = openNewProjectChat(vscode, 'claude', target, context);
+  await waiting;
+  await assert.rejects(openNewProjectChat(vscode, 'claude', target, context), /already in progress/);
+  release(); await first;
+  vscode.workspace.isTrusted = true;
+  const errors = [];
+  vscode.window.showErrorMessage = message => errors.push(message);
+  vscode.commands.executeCommand = async () => { throw new Error('Reload failed'); };
+  changed();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disposed, true);
+  assert.match(errors[0], /Reload failed/);
+  assert.equal(storage.get('claudeProjectOpen:window-concurrent'), undefined);
+  assert.equal(context.workspaceState.get('claudeProjectOpen'), undefined);
 });

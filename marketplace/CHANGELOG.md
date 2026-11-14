@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.20 - 14 November 2026
+
+- Switch between conversations and a read-only Git dashboard for the selected project.
+- Browse graphical commit history, branches, and changed files with highlighted, line-numbered diffs.
+- Inspect staged, unstaged, untracked, and committed changes, including first-parent merge comparisons.
+
+- Open Claude conversations in its native sidebar by default.
+- Create and resume Claude chats across projects in one VS Code window, retaining workspace folders and restoring the board after a same-window reload.
+- Block project switching when indexed chats are running, and validate and expire pending handoffs.
+
 ## 0.1.19 - 4 November 2026
 
 - Rename projects on the board while retaining their folders and chat assignments.
