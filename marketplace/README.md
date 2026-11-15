@@ -17,18 +17,20 @@ Requires Visual Studio Code 1.96 or newer and local history from either supporte
 - Preview the latest message and reopen conversations through an installed provider extension or its command-line tool.
 - Browse for an existing project folder during creation or link it later. The project page shows its linked path and retains assigned conversations.
 - See a running spinner and frame for unfinished tasks. Activity checks update every two seconds; completion and interruption stop the indicator when detected. The inactivity timeout is configurable.
-- Start or resume chats in the provider's sidebar in the current window. Switching Claude projects moves that folder first in the workspace, retains the other folders, and reloads the same window. Finish running chats before switching. New cards join the project after the first message.
+- Start or resume chats in the current window. Claude chats in other projects use native Claude editor tabs with their own working directories, without reloads. Its native toolbar and authentication remain in control. Retrieve a closed chat from its Atlas card; new cards appear after the first message.
 - See a spinner beside sidebar project names while their chats have running tasks.
 
 ## Git dashboard
 
 Select a project and choose **Git** beside **+ Chat** to browse graphical commit history and branches. Select a commit or use **Unstaged**, **Staged**, and **Untracked** to inspect changed files with highlighted diffs and line numbers. Git must be installed and the project folder must belong to a local repository. The dashboard is read-only and shows the latest 100 commits; remote references reflect local data without fetching. Merge comparisons use the first parent. Text previews are bounded, and binary files are identified without rendering their contents.
 
+Cross-project Claude tabs require the verified Windows Claude Code 2.1.323 bundle. A temporary directory bridge leaves installed Claude files and project settings unchanged. Unknown builds are rejected pending compatibility validation. Native tab restoration after a VS Code restart is not covered; retrieve saved chats through Atlas.
+
 ## Local data
 
 The extension reads local conversation transcripts and selected repository history and file differences, and saves organization preferences in Visual Studio Code's extension state. It does not change provider transcripts, read provider authentication files, make network requests, or collect telemetry. It requires no API key.
 
-Local history paths are configurable in **Settings > Chat Atlas**. Conversation previews are sampled for display; search indexes user and assistant messages throughout indexed transcripts. Remote hosts, archived sessions, and cloud-only history are not indexed automatically. Reopening a conversation requires an installed and signed-in provider extension or command-line tool; provider routing may change with provider updates and its native flows have not been verified live for this release.
+Local history paths are configurable in **Settings > Chat Atlas**. Conversation previews are sampled for display; search indexes user and assistant messages throughout indexed transcripts. Remote hosts, archived sessions, and cloud-only history are not indexed automatically. Reopening a conversation requires an installed and signed-in provider extension or command-line tool; provider routing may change with provider updates. Claude create/resume routing was verified with local native fixture histories; authenticated model turns were not tested.
 
 Organization preferences belong to each extension identity. This candidate uses **lpx.lpx-conversation-board**. Disable earlier Chat Atlas previews when switching to avoid duplicate commands; their organization preferences remain separate.
 

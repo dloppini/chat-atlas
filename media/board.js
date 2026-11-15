@@ -6,6 +6,10 @@ let data = { sessions: [], topics: [], sources: [], errors: [], projectCatalog: 
 let view = 'timeline', project = saved.project || '', provider = saved.provider || 'all', query = saved.query || '', showDone = saved.showDone || false, selected = saved.selected || '';
 let subfolderFilter = typeof saved.subfolderFilter === 'string' ? saved.subfolderFilter : null;
 let gitDiffId = 0, gitSelection = { mode: 'working' }, gitDiffResult = null;
+const gitHeights = { tree: 300, diff: 640 };
+for (const key of Object.keys(gitHeights)) if (Number.isFinite(saved.gitHeights?.[key])) gitHeights[key] = Math.max(160, Math.min(1200, saved.gitHeights[key]));
+const gitBranchFocus = saved.gitBranchFocus && typeof saved.gitBranchFocus === 'object' && !Array.isArray(saved.gitBranchFocus) ? saved.gitBranchFocus : {};
+let gitFocusPending = false;
 let gitOpen = false, gitProject = '', gitRequestId = 0, gitResult = null;
 let detailKey = '', excerpts = [], sampled = false, noticeTimer, newChatTarget = null;
 let projectDialogKey = '', projectDialogTarget = '', folderRequestId = 0;
@@ -44,7 +48,7 @@ function showNotice(message) {
     window.scrollTo({ ...pageScroll, behavior: 'instant' });
   }, 15000);
 }
-const persist = () => host.setState({ view, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
+const persist = () => host.setState({ gitBranchFocus, gitHeights, view, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
 const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects, sidebarWidth, showSubfolders } }); };
 function sidebarBounds() { return { min: 180, max: Math.max(180, Math.min(520, window.innerWidth - 480)) }; }
 function applySidebarWidth() {
@@ -115,15 +119,50 @@ function reorderProject(source, target, after = false) {
   persistSidebar(); render();
   [...$('projects').children].find(row => row.dataset.project === source)?.querySelector('.nav')?.focus();
 }
-function requestGit() {
-  gitProject = project; gitResult = null; gitDiffResult = null; gitDiffId++; gitSelection = { mode: 'working' };
-  send({ type: 'gitDashboard', projectKey: project, requestId: ++gitRequestId });
+function requestGit(resetDiff = true) {
+  gitProject = project; gitResult = null;
+  if (resetDiff) { gitDiffResult = null; gitDiffId++; gitSelection = { mode: 'working' }; }
+  send({ type: 'gitDashboard', projectKey: project, focusRef: gitBranchFocus[project] || '', requestId: ++gitRequestId });
+}
+function focusGitBranch(ref) {
+  gitFocusPending = true; gitBranchFocus[project] = ref; persist(); requestGit(false); renderGit();
+}
+function gitHeightControl(key, label) {
+  const field = el('label', 'git-height', label + ' height');
+  const input = el('input'); input.type = 'number'; input.min = '160'; input.max = '1200'; input.step = '20';
+  input.name = key + '-height'; input.value = gitHeights[key]; input.setAttribute('aria-label', label + ' height in pixels');
+  input.addEventListener('change', () => {
+    if (!input.validity.valid || !input.value) { input.value = gitHeights[key]; return; }
+    gitHeights[key] = Number(input.value); $('git-dashboard').style.setProperty('--git-' + key + '-height', gitHeights[key] + 'px'); persist();
+  });
+  field.append(input, el('span', '', 'px')); return field;
+}
+function gitGraphLayout(commits) {
+  const lanes = [], positions = [], byHash = new Map(), colors = new Map();
+  let nextColor = 0, maxLanes = 1;
+  for (const [index, commit] of commits.entries()) {
+    let lane = lanes.indexOf(commit.hash);
+    if (lane < 0) { lane = lanes.indexOf(null); if (lane < 0) lane = lanes.length; lanes[lane] = commit.hash; }
+    if (!colors.has(commit.hash)) colors.set(commit.hash, nextColor++);
+    const color = colors.get(commit.hash);
+    const position = { lane, index, commit, color }; positions.push(position); byHash.set(commit.hash, position);
+    lanes[lane] = null;
+    for (const [parentIndex, parent] of commit.parents.entries()) if (!lanes.includes(parent)) {
+      let target = parentIndex === 0 ? lane : lanes.indexOf(null);
+      if (target < 0) target = lanes.length;
+      lanes[target] = parent;
+      if (!colors.has(parent)) colors.set(parent, parentIndex === 0 ? color : nextColor++);
+    }
+    maxLanes = Math.max(maxLanes, lanes.length);
+  }
+  return { positions, byHash, maxLanes };
 }
 function renderGit() {
   const active = gitOpen && !!project;
+  document.body.classList.toggle('git-mode', active);
   if (!active) document.querySelectorAll('#sources, .toolbar, .filterbar, #board, main > footer').forEach(node => { node.hidden = false; });
   $('git-switch').hidden = !project;
-  $('git-switch').textContent = active ? 'Chats' : 'Git';
+  $('git-switch').setAttribute('aria-label', active ? 'Chats' : 'Git');
   $('git-switch').setAttribute('aria-pressed', String(active));
   $('git-switch').title = active ? 'Return to conversations' : 'Show repository branches, commit graph and local changes';
   $('git-dashboard').hidden = !active;
@@ -139,54 +178,67 @@ function renderGit() {
   section.setAttribute('aria-busy', String(!gitResult));
   if (!gitResult || gitResult.error) {
     const message = el('p', 'notice', gitResult?.error || 'Reading repository...');
-    message.setAttribute('role', 'status'); section.append(message); return;
+    message.setAttribute('role', 'status');
+    if (gitResult?.error && gitBranchFocus[project]) message.append(button('Show all branches', 'quiet', () => focusGitBranch('')));
+    section.append(message); return;
   }
   const repo = gitResult.dashboard;
-  section.append(el('h2', '', `Git - ${repo.branch}`), el('p', 'git-root', repo.root));
+  const repoHead = el('div', 'git-repo-heading');
+  repoHead.append(el('h2', '', 'Git'), el('span', 'git-branch-name', repo.branch), el('span', 'git-root', repo.root)); section.append(repoHead);
+  for (const key of Object.keys(gitHeights)) section.style.setProperty('--git-' + key + '-height', gitHeights[key] + 'px');
   const history = el('section', 'git-history');
   const toolbar = el('div', 'git-heading');
-  toolbar.append(el('h3', '', 'History'), el('span', 'git-caption', 'Latest 100 commits / all branches'));
+  toolbar.append(el('h3', '', 'Tree'));
+  const focusLabel = el('label', 'git-branch-focus', 'Branch');
+  const branchSelect = el('select'); branchSelect.id = 'git-branch-focus'; branchSelect.name = 'git-branch-focus';
+  const all = el('option', '', 'All branches'); all.value = ''; branchSelect.append(all);
+  for (const branch of repo.branchRefs || []) { const option = el('option', '', branch.name); option.value = branch.ref; branchSelect.append(option); }
+  branchSelect.value = repo.focusRef || '';
+  branchSelect.addEventListener('change', () => focusGitBranch(branchSelect.value));
+  focusLabel.append(branchSelect);
+  toolbar.append(focusLabel, el('span', 'git-caption', 'Latest 100 commits'), gitHeightControl('tree', 'Tree'));
   toolbar.append(button('Local changes (' + repo.changes.length + ')', 'quiet', () => selectGitDiff({ mode: 'working' })));
   history.append(toolbar);
   const commits = repo.commits || [];
-  const lanes = [], positions = [], byHash = new Map();
-  let maxLanes = 1;
-  for (const [index, commit] of commits.entries()) {
-    let lane = lanes.indexOf(commit.hash);
-    if (lane < 0) { lane = lanes.indexOf(null); if (lane < 0) lane = lanes.length; lanes[lane] = commit.hash; }
-    positions.push({ lane, index, commit }); byHash.set(commit.hash, { lane, index });
-    lanes[lane] = null;
-    for (const parent of commit.parents) if (!lanes.includes(parent)) {
-      let target = lanes.indexOf(null); if (target < 0) target = lanes.length; lanes[target] = parent;
-    }
-    maxLanes = Math.max(maxLanes, lanes.length);
-  }
+  const { positions, byHash, maxLanes } = gitGraphLayout(commits);
   const graphWidth = maxLanes * 22 + 24;
   const scroll = el('div', 'git-history-scroll'); scroll.tabIndex = 0; scroll.setAttribute('aria-label', 'Commit history');
   const graph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   graph.setAttribute('width', graphWidth); graph.setAttribute('height', commits.length * 44); graph.setAttribute('aria-hidden', 'true'); graph.classList.add('git-lanes');
   const shape = (name, attrs) => { const n = document.createElementNS(graph.namespaceURI, name); for (const [k,v] of Object.entries(attrs)) n.setAttribute(k, v); graph.append(n); };
-  for (const { lane, index, commit } of positions) {
+  for (const { lane, index, commit, color } of positions) {
     const x = lane * 22 + 14, y = index * 44 + 22;
-    for (const parent of commit.parents) {
+    for (const [parentIndex, parent] of commit.parents.entries()) {
       const target = byHash.get(parent), endX = target ? target.lane * 22 + 14 : x, endY = target ? target.index * 44 + 22 : commits.length * 44;
-      shape('path', { d: `M ${x} ${y} C ${x} ${y+22}, ${endX} ${endY-22}, ${endX} ${endY}`, class: `git-edge lane-${lane%4}` });
+      shape('path', { d: `M ${x} ${y} C ${x} ${y+22}, ${endX} ${endY-22}, ${endX} ${endY}`, class: `git-edge lane-${(parentIndex > 0 && target ? target.color : color)%6}` });
     }
-    shape('circle', { cx:x, cy:y, r:4, class:`git-node lane-${lane%4}` });
   }
+  for (const {lane, index, color} of positions) {
+    shape('circle', { cx:lane * 22 + 14, cy:index * 44 + 22, r:4, class:`git-node lane-${color%6}` });
+  }
+  // shortcut: six theme colors repeat for larger histories; ref names remain the identity.
   const rows = el('div', 'git-commit-rows');
-  for (const commit of commits) {
+  for (const {commit, color} of positions) {
     const row = button('', 'git-commit', () => selectGitDiff({mode:'commit', commit:commit.hash}));
     row.dataset.commit = commit.hash;
     row.setAttribute('aria-pressed', String(gitSelection.commit === commit.hash));
     row.title = commit.subject + '\n' + commit.hash + '\nParents: ' + (commit.parents.join(', ') || 'Root commit');
-    const subject = el('span', 'git-subject', commit.subject);
-    if (commit.refs) subject.append(el('span', 'git-refs', commit.refs));
+    const subject = el('span', 'git-subject');
+    for (const ref of (commit.refs || '').split(',').map(ref => ref.trim()).filter(Boolean)) subject.append(el('span', 'git-ref lane-' + color%6, ref));
+    subject.append(el('span', 'git-message', commit.subject));
     row.append(subject, el('code', '', commit.hash.slice(0,7)), el('span', 'git-author', commit.author), el('time', '', new Date(commit.date).toLocaleDateString()));
     rows.append(row);
   }
   scroll.append(graph, rows); history.append(commits.length ? scroll : el('p', '', 'No commits yet.'));
-  const branches = el('details', 'git-branch-list'); branches.append(el('summary', '', 'Branches'), el('pre', 'git-branches', repo.branches || repo.branch));
+  const branches = el('details', 'git-branch-list'); branches.append(el('summary', '', 'All branches'));
+  const branchLabels = el('div', 'git-branch-labels');
+  for (const branch of repo.branchRefs || []) {
+    const name = branch.name;
+    const tip = positions.find(({commit}) => (commit.refs || '').split(',').some(ref => ref.trim().replace(/^HEAD -> /, '') === name.replace(/^remotes\//, '')));
+    const control = button(name, 'git-ref' + (tip ? ' lane-' + tip.color%6 : ''), () => focusGitBranch(branch.ref), 'Focus branch ' + name);
+    control.setAttribute('aria-pressed', String(repo.focusRef === branch.ref)); branchLabels.append(control);
+  }
+  branches.append(branchLabels);
   section.append(branches, history);
   scroll.scrollTop = scrollPosition.top; scroll.scrollLeft = scrollPosition.left;
   const inspector = el('section', 'git-inspector'); inspector.id = 'git-inspector'; section.append(inspector);
@@ -208,26 +260,35 @@ function renderGitDiff() {
   for (const [mode,label] of [['working','Unstaged'],['staged','Staged'],['untracked','Untracked']]) {
     const control = button(label, gitSelection.mode===mode?'active':'', () => selectGitDiff({mode})); control.setAttribute('aria-pressed',String(gitSelection.mode===mode)); controls.append(control);
   }
-  head.append(controls); inspector.append(head);
+  head.append(gitHeightControl('diff', 'Diff'), controls); inspector.append(head);
   if (gitSelection.mode === 'commit') inspector.append(el('p','git-caption','Changes against the first parent; root commits show all additions.'));
   if (!gitDiffResult || gitDiffResult.error) {
     const notice = el('p','notice',gitDiffResult?.error || 'Loading comparison...'); notice.setAttribute('role','status'); inspector.append(notice); return;
   }
   const diff = gitDiffResult.diff;
   if (!diff.files.length) { inspector.append(el('p','notice','No files changed in this comparison.')); return; }
-  const pane = el('div','git-diff-layout'), files = el('nav','git-files'); files.setAttribute('aria-label','Changed files');
-  for (const file of diff.files) { const item = button(file, file===diff.file?'active':'', () => selectGitDiff({...gitSelection,file})); item.setAttribute('aria-current',String(file===diff.file)); files.append(item); }
-  const content = el('div','git-diff-content'); content.append(el('h4','',diff.file));
+  const pane = el('div','git-diff-layout'), files = el('nav','git-files');
+  files.append(el('div', 'git-files-heading', `Changed files (${diff.files.length})`)); files.setAttribute('aria-label','Changed files');
+  for (const file of diff.files) { const item = button(file, file===diff.file?'active':'', () => selectGitDiff({...gitSelection,file})); item.title = file; item.setAttribute('aria-current',String(file===diff.file)); files.append(item); }
+  const content = el('div','git-diff-content'), fileHead = el('div', 'git-file-heading');
+  fileHead.append(el('h4','',diff.file)); content.append(fileHead);
   if (diff.truncated) content.append(el('p','notice','Preview limited to 512 KB. Open the file in your editor to inspect the rest.'));
   const patch = el('pre','git-patch'); patch.tabIndex=0; patch.setAttribute('aria-label','File diff');
-  let oldLine=0,newLine=0;
-  for (const line of (diff.patch || 'No text changes (the file may have only metadata changes).').split('\n')) {
+  let oldLine=0,newLine=0, additions=0, deletions=0, inHunk=false;
+  const lines = (diff.patch || 'No text changes (the file may have only metadata changes).').split('\n');
+  const hasHunks = lines.some(line => /^@@ /.test(line));
+  for (const line of lines) {
+    if (hasHunks && !inHunk && !line.startsWith('@@ ')) continue;
     const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);
-    if (hunk) { oldLine=Number(hunk[1]);newLine=Number(hunk[2]); }
-    const added=line.startsWith('+')&&!line.startsWith('+++'), removed=line.startsWith('-')&&!line.startsWith('---'), context=line.startsWith(' ');
+    if (hunk) { oldLine=Number(hunk[1]);newLine=Number(hunk[2]); inHunk=true; }
+    if (line.startsWith('@@ New untracked')) { newLine=1; inHunk=true; }
+    const added=inHunk&&line.startsWith('+'), removed=inHunk&&line.startsWith('-'), context=inHunk&&line.startsWith(' ');
+    if (added) additions++; if (removed) deletions++;
     const row=el('span', 'git-diff-line'+(added?' added':removed?' removed':hunk?' hunk':''));
     row.append(el('span','git-line-number',(removed||context)&&oldLine?String(oldLine++):''),el('span','git-line-number',(added||context)&&newLine?String(newLine++):''),el('span','',line)); patch.append(row);
   }
+  const stats = el('span', 'git-diff-stats'); stats.setAttribute('aria-label', `${additions} added lines, ${deletions} deleted lines in preview`);
+  stats.append(el('span', 'git-added-count', '+' + additions), el('span', 'git-removed-count', '-' + deletions)); fileHead.append(stats);
   content.append(patch); pane.append(files,content); inspector.append(pane);
   if (focusedText) [...inspector.querySelectorAll('button')].find(n => n.textContent === focusedText)?.focus({preventScroll:true});
 }
@@ -549,7 +610,7 @@ window.addEventListener('message', e => {
     data = m; render();
   }
   if (m.type === 'gitDiff' && m.projectKey === project && m.requestId === gitDiffId) { gitDiffResult = m; renderGitDiff(); }
-  if (m.type === 'gitDashboard' && m.projectKey === project && m.requestId === gitRequestId) { gitResult = m; renderGit(); if (!m.error) selectGitDiff({mode:'working'}); }
+  if (m.type === 'gitDashboard' && m.projectKey === project && m.requestId === gitRequestId) { gitResult = m; renderGit(); if (!m.error && !gitDiffResult) selectGitDiff(gitSelection); if (!m.error && gitFocusPending) $('git-branch-focus')?.focus({preventScroll:true}); gitFocusPending = false; }
   if (m.type === 'detail' && m.key === detailKey && !gitOpen) { excerpts = m.messages; sampled = m.sampled; renderDetail(); }
   if (m.type === 'projectCreated') {
     const movedChat = !!projectDialogKey;

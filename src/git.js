@@ -6,7 +6,7 @@ const run = (cwd, args) => new Promise((resolve, reject) => {
     else resolve(stdout);
   });
 });
-async function readGitDashboard(cwd) {
+async function readGitDashboard(cwd, focusRef = '') {
   const root = (await run(cwd, ['rev-parse', '--show-toplevel'])).trim();
   const [branch, branches, status, refs] = await Promise.all([
     run(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => 'Detached HEAD'),
@@ -14,6 +14,9 @@ async function readGitDashboard(cwd) {
     run(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
     run(root, ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'])
   ]);
+  const branchRefs = refs.trim().split('\n').filter(Boolean).map(ref => ({ ref, name: ref.replace(/^refs\/heads\//, '').replace(/^refs\/remotes\//, 'remotes/') }));
+  if (typeof focusRef !== 'string' || (focusRef && !branchRefs.some(branch => branch.ref === focusRef))) throw new Error('This branch is no longer available. Show all branches or refresh.');
+  const revisions = focusRef ? [focusRef] : ['--all', ...(branch.trim() === 'Detached HEAD' ? ['HEAD'] : [])];
   const changes = [], entries = status.split('\0');
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -23,14 +26,14 @@ async function readGitDashboard(cwd) {
     changes.push({ code, file, original });
   }
   const graph = refs.trim() || branch.trim() === 'Detached HEAD'
-    ? await run(root, ['log', '--all', ...(branch.trim() === 'Detached HEAD' ? ['HEAD'] : []), '--graph', '--topo-order', '--max-count=100', '--no-color', '--decorate=short', '--format=%h %s (%an, %ar)%d'])
+    ? await run(root, ['log', ...revisions, '--graph', '--topo-order', '--max-count=100', '--no-color', '--decorate=short', '--format=%h %s (%an, %ar)%d'])
     : '';
-  const log = graph ? await run(root, ['log', '--all', ...(branch.trim() === 'Detached HEAD' ? ['HEAD'] : []), '--topo-order', '-100', '--format=%H%x00%P%x00%s%x00%an%x00%aI%x00%D']) : '';
+  const log = graph ? await run(root, ['log', ...revisions, '--topo-order', '-100', '--format=%H%x00%P%x00%s%x00%an%x00%aI%x00%D']) : '';
   const commits = log.trimEnd().split('\n').filter(Boolean).map(line => {
     const [hash, parents, subject, author, date, refs] = line.split('\0');
     return { hash, parents: parents.split(' ').filter(Boolean), subject, author, date, refs };
   });
-  return { root, branch: branch.trim(), branches: branches.trimEnd(), changes, graph, commits };
+  return { root, branch: branch.trim(), branches: branches.trimEnd(), changes, graph, commits, branchRefs, focusRef };
 }
 async function readGitDiff(cwd, selection) {
   const root = (await run(cwd, ['rev-parse', '--show-toplevel'])).trim();

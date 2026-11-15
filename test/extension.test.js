@@ -38,7 +38,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
     env: { openExternal: async value => { openedFolders.push(value.fsPath); return true; } },
     Uri: { file: uri, joinPath: (base, ...parts) => uri(path.join(base.fsPath, ...parts)) },
     ViewColumn: { One: 1 }, StatusBarAlignment: { Left: 1 },
-    workspace: { onDidGrantWorkspaceTrust: () => ({ dispose() {} }), workspaceFolders: [{ uri: uri(root) }], getConfiguration: () => ({ get: (key, fallback) => key === 'codexHome' ? path.join(root, 'codex') : key === 'claudeHome' ? path.join(root, 'claude') : fallback }) },
+    workspace: { workspaceFolders: [{ uri: uri(root) }], getConfiguration: () => ({ get: (key, fallback) => key === 'codexHome' ? path.join(root, 'codex') : key === 'claudeHome' ? path.join(root, 'claude') : fallback }) },
     commands: { registerCommand: (name, callback) => { commands.set(name, callback); return { dispose() {} }; } },
     window: {
       registerWebviewPanelSerializer: () => ({ dispose() {} }),
@@ -66,7 +66,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
         async refreshActivity(current) { return activityResult ? await activityResult(current) : structuredClone(sessions); }
       } };
       if (name === 'node:fs') return { watch: (root, options, callback) => { const watcher = { root, options, callback, on() {}, close() { this.closed = true; } }; watchers.push(watcher); return watcher; } };
-      if (name === './providers') return { openNewProjectChat: (...args) => chats.push(args.slice(1, 3)), resumePendingProjectChats: async () => {} };
+      if (name === './providers') return { openNewProjectChat: (...args) => chats.push(args.slice(1, 3)) };
       if (name === './git') return require('../src/git');
       if (name === '../media/projects') return projects;
       return require(name);

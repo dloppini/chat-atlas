@@ -16,6 +16,10 @@ Keep both providers supported, preserve stable ordering and reversible completio
 
 Contributions are licensed under the repository's MIT license.
 
+## Local delivery
+
+After completing Chat Atlas changes, always increment the patch version, update both changelogs, run the checks appropriate to the change, package the latest working tree, and install the generated VSIX with `code --install-extension chat-atlas-<version>.vsix --force`. Verify `lpx.lpx-conversation-board@<version>` with `code --list-extensions --show-versions`. Report when a VS Code window reload is still needed to activate it.
+
 ## Architecture
 
 `src/core.js` contains the bounded history readers, classifiers and stable metadata reconciliation; `src/extension.js` owns VS Code integration and storage; `media/` is the CSP-protected webview. The webview renders conversation content with `textContent`, and only validated UUIDs enter resume commands.
@@ -28,6 +32,6 @@ Codex session routing was inspected in the installed extension `26.930.51102` (`
 
 Integration references: [Codex IDE commands](https://developers.openai.com/codex/ide/commands), [Claude CLI resume](https://code.claude.com/docs/en/cli-reference), [VS Code webviews](https://code.visualstudio.com/api/extension-guides/webview).
 
-Claude new chats open its sidebar and invoke `claude-vscode.newConversation`. Claude reads the first workspace folder, so a cross-project action promotes the target root while preserving all roots and labels. A short-lived request in global state survives the initial workspace transition; it moves into the destination workspace's state before reloading the same window, since `env.sessionId` changes on window reload. The board serializer restores its message handlers. Do not replace the reload with only an extension-host restart: rendered webviews can survive with disconnected handlers.
+Claude uses the native sidebar for the first workspace project. Other projects use `src/claude-tabs.js`: a serialized AsyncLocalStorage-scoped, one-shot realpath bridge restricted to Claude's setupPanel call and the first workspace root. It restores the original function immediately and on failures. The exact Windows 2.1.323 extension bundle SHA-256 is pinned; fail before opening on unknown builds. Never mutate workspace roots, reload, restart, edit Claude files, or insert project hooks. The design was informed by the [Claude Folder experiment](https://marketplace.visualstudio.com/items?itemName=opdify.claude-folder); no implementation was copied.
 
-Native verification used an isolated, normally installed VS Code copy, unmodified Claude 2.1.323, and fictional histories. A-to-B-to-A resume loaded the exact histories in the native sidebar and retained the same window target. Claude's launch logs confirmed the requested directories and resume UUIDs; a new Project B chat launched in Project B. No authenticated model turn or production project permission/settings behavior was tested. Extension Development Host suppresses automatic workspace restarts, so it is insufficient to validate this handoff alone. See [VS Code workspace updates](https://code.visualstudio.com/api/references/vscode-api#workspace.updateWorkspaceFolders). Codex routing remains unchanged.
+Tests cover directory/UUID validation, compatibility refusal, unrelated filesystem reads, parallel requests, cleanup, native session reuse, and provider dispatch. The native fixture probe covers create, close/reopen, and two project histories in one host. Authentication and paid model turns require separate evidence. When updating the fingerprint, repeat those native checks; changing the version alone is insufficient. Native restoration on a later VS Code restart is not guaranteed by this bridge; retrieve through Atlas.

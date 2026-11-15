@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.25 - 15 November 2026
+
+- Replace the Git text button with an accessible branch icon.
+- Make diffs easier to read with larger text, tighter gutters, and compact patch headers.
+- Give the diff more room by default and reduce file-list space on narrow screens.
+
+## 0.1.24 - 15 November 2026
+
+- Focus Git history on local or remote branches from the Tree toolbar or branch labels.
+- Remember branch focus per project while preserving the open diff and pane heights.
+- Load focused history directly from Git and recover when a saved branch is unavailable.
+
+## 0.1.23 - 15 November 2026
+
+- Improve Git history with coloured branch paths and named branch badges.
+- Compact the Git header and remember independent tree and diff heights.
+- Clarify file diffs with sticky filenames, change counts, and correct line highlighting.
+
+## 0.1.22 - 14 November 2026
+
+- Create and retrieve cross-project Claude chats in native editor tabs without reloading VS Code or changing workspace roots.
+- Keep Claude's own toolbar, permissions, and authentication; reuse open sessions by their original ID.
+- Guard the directory bridge against unverified Claude builds (validated on Windows 2.1.323); leave installed Claude files unchanged.
+
+## 0.1.21 - 14 November 2026
+
+- Remove automatic window reloads and workspace reordering for Claude chats.
+- Keep native sidebar routing for the first workspace folder and report unsupported cross-project actions without interrupting running chats.
+
 ## 0.1.20 - 14 November 2026
 
 - Switch between conversations and a read-only Git dashboard for the selected project.

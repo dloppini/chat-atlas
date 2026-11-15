@@ -45,3 +45,27 @@ test('Git dashboard rejects non-repositories', async t => {
   await fs.writeFile(path.join(root, '.git'), 'gitdir: missing-repository');
   await assert.rejects(readGitDashboard(root), /not a git repository/);
 });
+
+test('Branch focus loads exact local and remote refs beyond the all-branch history limit', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-focus-'));
+  t.after(() => fs.rm(root, {recursive:true, force:true}));
+  const git = (...args) => execFileSync('git', args, {cwd:root,encoding:'utf8',windowsHide:true});
+  git('init','-b','main'); git('config','user.name','Atlas Test'); git('config','user.email','atlas@example.invalid');
+  git('commit','--allow-empty','-m','Base');
+  const base = git('rev-parse','HEAD').trim();
+  git('branch','old-focus'); git('update-ref','refs/remotes/origin/old-focus',base);
+  for(let i=0;i<101;i++) git('commit','--allow-empty','-m','Main '+i);
+  const before=git('rev-parse','HEAD');
+  const all=await readGitDashboard(root);
+  assert.equal(all.commits.length,100);
+  assert.ok(!all.commits.some(commit=>commit.hash===base));
+  for(const ref of ['refs/heads/old-focus','refs/remotes/origin/old-focus']) {
+    const focused=await readGitDashboard(root,ref);
+    assert.equal(focused.focusRef,ref);
+    assert.equal(focused.commits.length,1);
+    assert.equal(focused.commits[0].hash,base);
+    assert.ok(focused.branchRefs.some(branch=>branch.ref===ref));
+  }
+  for(const ref of ['--all','main~1','refs/heads/missing',{},42]) await assert.rejects(readGitDashboard(root,ref),/branch is no longer/);
+  assert.equal(git('rev-parse','HEAD'),before);
+});

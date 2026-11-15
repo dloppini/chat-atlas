@@ -15,7 +15,7 @@ delete manifest.qna;
 delete manifest.galleryBanner;
 const runtimeFiles = [
   'LICENSE.txt',
-  'src/git.js', 'src/extension.js', 'src/core.js', 'src/providers.js', 'src/codex-chat.js',
+  'src/git.js', 'src/extension.js', 'src/core.js', 'src/providers.js', 'src/codex-chat.js', 'src/claude-tabs.js',
   'media/board.html', 'media/board.css', 'media/board.js', 'media/projects.js', 'media/icon.png',
 ];
 
