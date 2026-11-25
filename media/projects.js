@@ -31,6 +31,23 @@ function linkProjectFolder(state, previousKey, cwd) {
   }
   return key;
 }
+function reconnectProjectFolder(state, project, cwd) {
+  const key = originalProjectKey({ cwd });
+  if (key === project.key) return key;
+  if (state.customProjects?.some(item => originalProjectKey(item) === key) || state.projectNames?.[key]) {
+    throw new Error('That folder already belongs to a named project.');
+  }
+  const aliases = state.relocatedFolders ||= {};
+  delete aliases[key];
+  for (const [source, target] of Object.entries(aliases)) {
+    if (originalProjectKey({ cwd: target }) === project.key) aliases[source] = cwd;
+  }
+  aliases[project.key] = cwd;
+  const custom = state.customProjects?.find(item => originalProjectKey(item) === project.key);
+  if (custom) custom.cwd = cwd;
+  for (const card of Object.values(state.cards)) if (card.projectOverride === project.key) card.projectOverride = key;
+  return key;
+}
 function projectCatalog(sessions, customProjects = [], projectNames = {}) {
   const catalog = new Map();
   for (const session of sessions) {
@@ -95,4 +112,4 @@ function moveProject(order, source, target, after = false) {
   next.splice(next.indexOf(target) + (after ? 1 : 0), 0, source);
   return next;
 }
-if (typeof module !== 'undefined') module.exports = { canonicalProjectPath, originalProjectKey, projectGroupKey, remapProjectKeys, linkProjectFolder, projectCatalog, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject };
+if (typeof module !== 'undefined') module.exports = { canonicalProjectPath, originalProjectKey, projectGroupKey, remapProjectKeys, linkProjectFolder, reconnectProjectFolder, projectCatalog, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject };

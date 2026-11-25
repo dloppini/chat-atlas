@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.1.49 - 25 November 2026
+
+- Analyze C, C++, Arduino and Python projects in Engineering: includes and imports, complexity, complex functions, cycles and test reach. Header and implementation pairs appear as one unit on the dependency map.
+- List large generated data files (images, fonts, sounds) without reading them, and mark files that are not analyzed with the reason.
+- Highlight the selected Engineering view.
+- Start new Claude chats and handoffs in the terminal when Claude chats are set to open there.
+
+## 0.1.48 - 25 November 2026
+
+- See Engineering architecture as a layered dependency map: drill into folders, trace a file's imports and importers, and spot cycles and hotspots at a glance.
+- Review code quality in the new Quality view: hotspots (complexity × recent commits), complex functions, folder coupling, import cycles, files without importers and source not reached by tests, with a ranked Where to start list and a copyable quality brief for agents.
+
+## 0.1.47 - 23 November 2026
+
+- Open Git Local changes in All, with yellow M badges for modified files and green N badges for new files.
+
+## 0.1.46 - 23 November 2026
+
+- Keep Engineering refresh running through Windows file access-time notifications, temporary Git locks, and Git-ignored output. Real edits still mark the snapshot stale.
+
+## 0.1.45 - 23 November 2026
+
+- Open Engineering from a selected project to capture a local repository snapshot, explore JS/TS imports and review file impact with source evidence.
+- Analyze a file from the Git diff inspector and copy a scoped impact brief.
+
+## 0.1.44 - 22 November 2026
+
+- Find chats for a file, review next steps by project, open matching passages with context, and prepare linked handoffs to Codex or Claude Code.
+
+## 0.1.43 - 22 November 2026
+
+- Scan conversations in a date-grouped Timeline list. Workflow and Topics keep their draggable cards.
+- Open Projects from narrow windows without changing the desktop sidebar preference.
+- Keep keyboard focus and in-progress edits in Details when conversation excerpts arrive.
+
+## 0.1.40 - 22 November 2026
+
+- Start a Claude sidebar draft for another project, append your task, and send it when ready. Atlas uses the folder instruction to file the card and the task for its fallback title. Added Claude 2.1.330 to the verified Windows resume builds.
+
+## 0.1.36 - 21 November 2026
+
+- Choose a focused integrated terminal or native chat window for Claude conversation titles.
+- Browse chat files in the current VS Code window, reconnect moved project folders, and create a project from the optional Windows Explorer menu.
+
+## 0.1.34 - 21 November 2026
+
+- Open other projects' Claude chats beside the board and reuse the side editor group. Added compatibility for Windows Claude Code 2.1.326 through 2.1.329.
+
+## 0.1.33 - 15 November 2026
+
+- Add a header bug icon for reporting bugs, requesting features, and viewing existing GitHub issues.
+- Open editable report drafts with version details while keeping conversation content private.
+
+## 0.1.32 - 15 November 2026
+
+- Stream large Git diffs into bounded previews, fixing stdout maxBuffer errors in local changes and commit inspection.
+- Preserve UTF-8 text, file switching, and Git failure feedback when a preview is truncated.
+
+## 0.1.31 - 15 November 2026
+
+- Stage and unstage individual files or a full comparison without discarding working files.
+- Commit staged changes with a multiline message, persistent project drafts, and stale-index validation.
+- Publish branches without an upstream and open Azure DevOps PR creation for the pushed source branch.
+
+## 0.1.30 - 15 November 2026
+
+- Ignore Companion Page snapshots when deriving conversation titles, previews, and activity.
+- Recover meaningful card titles when the saved Codex title contains full or truncated page metadata.
+
+## 0.1.29 - 15 November 2026
+
+- Mark the checked-out HEAD and distinguish it from the commit being inspected.
+- Show upstream ahead/behind counts and compare focused branches with HEAD.
+- Add Fetch, fast-forward Pull, and explicit upstream Push with progress, validation, and error feedback.
+
+## 0.1.28 - 15 November 2026
+
+- Fit the Git workspace to the window, giving local changes the remaining height instead of restoring a cramped legacy size.
+- Compact history rows and repository controls; hide history for a larger code review area.
+- Add saved line wrapping and layout preferences while retaining custom pane heights.
+
+## 0.1.27 - 15 November 2026
+
+- Restore cross-project Claude tabs for Windows Claude 2.1.325, retaining exact bundle compatibility checks.
+
+## 0.1.26 - 15 November 2026
+
+- Add saved Pearl and Dark themes with a VS Code theme option.
+- Refine buttons with soft raised and inset surfaces and violet accents for primary actions.
+- Improve heading hierarchy, theme contrast, focus states and responsive header controls.
+
 ## 0.1.25 - 15 November 2026
 
 - Replace the Git text button with an accessible branch icon.

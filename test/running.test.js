@@ -157,3 +157,30 @@ test('Bounded sampling keeps complete records that cross the contiguous head/tai
   assert.equal(records.at(-1).payload.phase, 'final_answer');
   assert.equal(records.some(r => r.type === 'atlas_sample_gap'), false);
 });
+
+test('Reported file activity follows each provider and clears on new turns and completion', () => {
+  const patch = response('custom_tool_call', { name: 'apply_patch', input: '*** Begin Patch\n*** Update File: board.js\n*** End Patch' });
+  const files = (provider, records) => parseSession(provider, id + '.jsonl', provider === 'codex' ? [meta, ...records] : [user, ...records], stat).activeFiles;
+  assert.deepEqual(files('codex', [patch]), ['board.js']);
+  assert.deepEqual(files('codex', [patch, event('turn_aborted')]), []);
+  const read = claude([{ type: 'tool_use', name: 'Read', input: { file_path: 'src/core.js' } }]);
+  assert.deepEqual(files('claude', [read]), ['src/core.js']);
+  assert.deepEqual(files('claude', [read, user]), []);
+  assert.deepEqual(files('claude', [read, claude([], 'end_turn')]), []);
+});
+
+test('Explorer marks only project files and clears them after the last active chat', () => {
+  const { registerActivity } = require('../src/chat-files');
+  const uri = fsPath => ({ scheme: 'file', fsPath });
+  const vscode = { EventEmitter: class { fire() {} }, ThemeColor: class {}, Uri: { file: uri }, window: { registerFileDecorationProvider() {} } };
+  const activity = registerActivity(vscode, { subscriptions: [] });
+  const cwd = path.resolve('fixture');
+  const session = { cwd, running: true, activeFiles: ['board.js', '../outside.js'] };
+  activity.update(['claude', 'codex'].map(provider => ({ ...session, provider })));
+  const mark = activity.lookup(uri(path.join(cwd, 'board.js')));
+  assert.equal(mark.badge, '\u25cf');
+  assert.match(mark.tooltip, /Claude and Codex/);
+  assert.equal(activity.lookup(uri(path.resolve(cwd, '../outside.js'))), undefined);
+  activity.update([]);
+  assert.equal(activity.lookup(uri(path.join(cwd, 'board.js'))), undefined);
+});

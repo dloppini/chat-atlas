@@ -26,27 +26,31 @@ function textOf(content) {
   return Array.isArray(content) ? content.filter(b => ['text', 'input_text', 'output_text'].includes(b.type)).map(b => b.text || '').join('\n') : '';
 }
 function cleanMessage(text) {
-  return text.replace(/<(environment_context|permissions instructions|recommended_plugins|system-reminder|ide_opened_file|ide_selection|external_codex_apps_open_page|codex_apps_open_page_instructions|codex_apps_client_time_context|oai-mem-citation)[\s\S]*?<\/\1>/gi, '').trim();
+  return text.replace(/<(environment_context|permissions instructions|recommended_plugins|system-reminder|ide_opened_file|ide_selection|external_codex_apps_open_page|external_codex_apps_selected_page(?:_part_\d+_of_\d+)?|codex_apps_open_page_instructions|codex_apps_client_time_context|oai-mem-citation)[\s\S]*?<\/\1>/gi, '').trim();
 }
 function isHumanPrompt(text) {
   return text && !/^(# AGENTS\.md|<INSTRUCTIONS>|<environment_context>|<permissions instructions>|<system-reminder>|\[Request interrupted)/i.test(text.trim());
 }
 function conversationTitle(text) {
   if (typeof text !== 'string' || /^\s*<skill>/i.test(text)) return '';
-  const title = text.replace(/\[\$[^\]]+\]\((?:[^()]|\([^)]*\))*\)/g, '')
+  text = cleanMessage(text);
+  if (/^(?:<external_codex_apps_(?:selected_page|open_page)|Companion Page snapshot part \d+ of \d+:)/i.test(text)) return '';
+  const title = text.replace(/^Atlas handoff from (?:codex|claude):[a-f0-9-]{36}\s*/i, '').replace(/\[\$[^\]]+\]\((?:[^()]|\([^)]*\))*\)/g, '')
     .replace(/^\s*(?:\$[a-z_][\w:-]*(?:\s+|$))+/i, '').replace(/\s+/g, ' ').trim();
   return /^(?:untitled(?: conversation| chat)?|new chat)$/i.test(title) ? '' : title;
 }
 function turnActivity(provider, records, lastWriteAt, previous = {}) {
   let active = previous.activeTurnSignal ?? null, terminal = previous.activeTurnClosed === true, activityAt = previous.activeTurnAt || 0;
+  let activeFiles = previous.activeFiles || [];
   const signal = (value, record, force = false) => {
     if (value && terminal && !force) return;
+    if (!value || force) activeFiles = [];
     active = value; terminal = !value;
     activityAt = Math.min(dateMs(record.timestamp, lastWriteAt), lastWriteAt, Date.now());
   };
   for (const record of records) {
     // Activity in the head belongs to an older turn when the middle is omitted.
-    if (record.type === 'atlas_sample_gap') { active = null; terminal = false; activityAt = 0; continue; }
+    if (record.type === 'atlas_sample_gap') { activeFiles = []; active = null; terminal = false; activityAt = 0; continue; }
     const payload = record.payload;
     if (provider === 'codex') {
       if (record.type === 'event_msg') {
@@ -55,6 +59,14 @@ function turnActivity(provider, records, lastWriteAt, previous = {}) {
         else if (['task_complete', 'task_completed', 'turn_aborted', 'task_aborted'].includes(kind)) signal(false, record);
         else if (kind === 'user_message' && isHumanPrompt(cleanMessage(textOf(payload.message)))) signal(true, record, true);
         else if (['agent_reasoning', 'exec_command_begin', 'exec_command_end', 'patch_apply_begin', 'patch_apply_end', 'mcp_tool_call_begin', 'mcp_tool_call_end', 'web_search_begin', 'web_search_end'].includes(kind)) signal(true, record);
+      }
+      if (active && record.type === 'event_msg' && ['exec_command_begin', 'exec_command_end'].includes(payload?.type)) {
+        activeFiles = (Array.isArray(payload.parsed_cmd) ? payload.parsed_cmd : [])
+          .filter(cmd => cmd?.type === 'read' && typeof cmd.path === 'string')
+          .map(cmd => payload.cwd && path.isAbsolute(payload.cwd) ? path.resolve(payload.cwd, cmd.path) : cmd.path);
+      }
+      if (active && record.type === 'event_msg' && ['patch_apply_begin', 'patch_apply_end'].includes(payload?.type)) {
+        activeFiles = Object.keys(payload.changes || {});
       }
       if (record.type === 'response_item') {
         if (payload?.type === 'message' && payload.role === 'user' && isHumanPrompt(cleanMessage(textOf(payload.content)))) signal(true, record, true);
@@ -68,6 +80,12 @@ function turnActivity(provider, records, lastWriteAt, previous = {}) {
           else if (phase === 'commentary' || phase === 'analysis') signal(true, record);
         }
         if (['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'].includes(payload?.type)) signal(true, record);
+        if (active && ['function_call', 'custom_tool_call'].includes(payload?.type)) {
+          activeFiles = [];
+          if (payload.name === 'apply_patch' && typeof payload.input === 'string') {
+            activeFiles = Array.from(payload.input.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm), match => match[1].trim());
+          }
+        }
       }
     }
     if (provider === 'claude') {
@@ -84,13 +102,20 @@ function turnActivity(provider, records, lastWriteAt, previous = {}) {
         if (['end_turn', 'stop_sequence', 'max_tokens', 'refusal'].includes(stop)) signal(false, record);
         else if (stop === 'tool_use' || (Array.isArray(content) && content.some(block => ['thinking', 'tool_use'].includes(block.type)))) signal(true, record);
       }
+      if (active && record.type === 'assistant' && Array.isArray(content)) {
+        const calls = content.filter(block => block.type === 'tool_use');
+        if (calls.length) activeFiles = calls.flatMap(call => typeof call.input?.file_path === 'string' ? [call.input.file_path] : []);
+      }
       if (record.type === 'system' && record.subtype === 'turn_duration') signal(false, record);
     }
   }
-  return { activeTurnSignal: active, activeTurnAt: activityAt, activeTurnClosed: terminal };
+  return { activeFiles, activeTurnSignal: active, activeTurnAt: activityAt, activeTurnClosed: terminal };
 }
 function dateMs(value, fallback = 0) { const n = Date.parse(value); return Number.isFinite(n) ? n : fallback; }
 function projectName(cwd) { return cwd ? cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : 'Other conversations'; }
+function claudeProjectPrompt(cwd) {
+  return `Work in ${cwd}.\nRead the project instructions there and use that folder for files, commands, and tests.\n\n`;
+}
 function subfolderHint(records, cwd) {
   if (!cwd) return '';
   const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -138,19 +163,109 @@ function conversationText(provider, r) {
   if (!content || (role === 'user' && !isHumanPrompt(content))) return null;
   return { role, text: content, timestamp: r.timestamp || '' };
 }
-async function fullSearchText(provider, file) {
+function searchableMessage(provider, record) {
+  const message = conversationText(provider, record);
+  if (message) return message;
+  const event = record?.payload;
+  if (provider !== 'codex' || record.type !== 'event_msg' || !['user_message', 'agent_message'].includes(event?.type)) return null;
+  const role = event.type === 'user_message' ? 'user' : 'assistant';
+  const text = cleanMessage(textOf(event.message));
+  return text && (role !== 'user' || isHumanPrompt(text)) ? { role, text } : null;
+}
+async function* transcriptRecords(file) {
   const input = createReadStream(file, { encoding: 'utf8' });
   const lines = createInterface({ input, crlfDelay: Infinity });
-  const parts = [];
   try {
     for await (const line of lines) {
       let record;
       try { record = JSON.parse(line); } catch { continue; }
-      const message = conversationText(provider, record);
-      if (message) parts.push(message.text.toLowerCase());
+      if (record && typeof record === 'object') yield record;
     }
   } finally { lines.close(); input.destroy(); }
-  return parts.join('\n');
+}
+function pathKey(file) {
+  return process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
+}
+function indexRecord(index, provider, record) {
+  const message = searchableMessage(provider, record);
+  if (message) index.parts.add(message.text.toLowerCase());
+  const p = record.payload;
+  if (record.type === 'turn_context' && typeof p?.cwd === 'string') index.cwd = p.cwd;
+  const root = p?.cwd || record.cwd || index.cwd;
+  function add(file, kind, evidence) {
+    if (typeof file !== 'string' || (!path.isAbsolute(file) && !(typeof root === 'string' && path.isAbsolute(root)))) return;
+    const key = pathKey(path.isAbsolute(file) ? file : path.resolve(root, file));
+    const previous = index.files.get(key);
+    if (previous?.kind !== 'Edited' || kind === 'Edited') index.files.set(key, { kind, evidence:String(evidence).slice(0,240) });
+  }
+  if (provider === 'claude' && record.type === 'assistant' && Array.isArray(record.message?.content)) {
+    for (const block of record.message.content) {
+      if (block?.type !== 'tool_use') continue;
+      if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Read'].includes(block.name))
+        add(block.input?.file_path || block.input?.notebook_path, block.name === 'Read' ? 'Read' : 'Edited', block.input?.new_string || block.input?.content || block.name);
+    }
+  }
+  if (provider !== 'codex') return;
+  if (record.type === 'event_msg' && p?.type === 'patch_apply_end' && p.success !== false) {
+    for (const [file, change] of Object.entries(p.changes || {})) {
+      const excerpt = typeof change?.unified_diff === 'string' && /^\+(?!\+\+).*$/m.exec(change.unified_diff)?.[0];
+      add(file, 'Edited', excerpt || 'Patch'); add(change?.move_path, 'Edited', 'Patch move');
+    }
+  }
+  if (record.type === 'event_msg' && p?.type === 'exec_command_end' && !p.exit_code) {
+    for (const cmd of Array.isArray(p.parsed_cmd) ? p.parsed_cmd : []) if (cmd?.type === 'read') add(cmd.path, 'Read', cmd.cmd || 'Read');
+  }
+  if (record.type === 'response_item' && p?.name === 'apply_patch' && typeof p.input === 'string') {
+    for (const match of p.input.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) add(match[1].trim(), 'Edited', 'Patch requested');
+  }
+}
+async function fileMatch(session, target, currentFolder = session.cwd, token) {
+  const relative = currentFolder && path.relative(currentFolder, target);
+  const inside = relative && !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative);
+  const original = inside && session.cwd ? path.resolve(session.cwd, relative) : target;
+  const recorded = session.fileEvidence?.get(pathKey(original));
+  if (recorded) return { ...recorded, evidence: recorded.evidence + ' · ' + (inside ? relative : target) };
+  const candidates = (inside ? [original, './' + relative, relative] : [target]).map(name => name.replaceAll('\\', '/'));
+  if (!(session.searchText || '').includes(path.basename(target).toLowerCase())) return null;
+  for await (const record of transcriptRecords(session.file)) {
+    if (token?.isCancellationRequested) return null;
+    const text = searchableMessage(session.provider, record)?.text;
+    if (!text) continue;
+    const content = text.replaceAll('\\', '/');
+    const haystack = process.platform === 'win32' ? content.toLowerCase() : content;
+    for (const name of candidates) {
+      const needle = process.platform === 'win32' ? name.toLowerCase() : name;
+      let start = 0;
+      while ((start = haystack.indexOf(needle, start)) !== -1) {
+        const end = start + needle.length;
+        if (!/[\w./\\:-]/.test(content[start - 1] || '') && !/^(?:[\w/\\-]|\.\w)/.test(content.slice(end,end+2)))
+          return { kind:'Mentioned', evidence:text.slice(Math.max(0,start-45),end+65).replace(/\s+/g,' ').trim() };
+        start = end;
+      }
+    }
+  }
+  return null;
+}
+async function passages(session, query, targetLine) {
+  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const matches = [];
+  let previous, line = 0, found;
+  for await (const record of transcriptRecords(session.file)) {
+    line++;
+    const message = searchableMessage(session.provider, record);
+    if (!message || (message.text === previous?.text && message.role === previous.role)) continue;
+    if (found) { found.after = message; break; }
+    if (targetLine === line) found = { before:previous, message };
+    if (targetLine === undefined && words.length) {
+      const lower = message.text.toLowerCase();
+      if (words.every(word => lower.includes(word))) {
+        const offset = lower.indexOf(words[0]);
+        matches.push({ line, label:message.text.slice(Math.max(0,offset-45),offset+155).replace(/\s+/g,' '), description:message.role });
+      }
+    }
+    previous = message;
+  }
+  return targetLine === undefined ? matches : found;
 }
 function parseSession(provider, file, records, stat, titleEntry) {
   const meta = records.find(r => r.type === 'session_meta')?.payload;
@@ -160,23 +275,30 @@ function parseSession(provider, file, records, stat, titleEntry) {
   if (!UUID.test(id || '')) return null;
   const cwd = meta?.cwd || records.find(r => typeof r.cwd === 'string')?.cwd || '';
   const messages = [];
-  const searchParts = [];
+  const history = { parts:new Set(), files:new Map(), cwd };
   for (const r of records) {
     const message = conversationText(provider, r);
+    indexRecord(history, provider, r);
     if (!message) continue;
     const { role, text: content } = message;
-    searchParts.push(content.toLowerCase());
     if (messages.at(-1)?.text === content) continue;
     messages.push({ role, text: content.slice(0, 12000), timestamp: r.timestamp || '' });
   }
-  const first = messages.filter(m => m.role === 'user').map(m => conversationTitle(m.text)).find(Boolean) || '';
+  const userMessages = messages.filter(m => m.role === 'user');
+  const opening = userMessages[0]?.text.replace(/\r\n/g, '\n') || '';
+  const folder = provider === 'claude' && /^Work in ([^\n]+)\.\n/.exec(opening)?.[1];
+  const starter = folder && claudeProjectPrompt(folder).trimEnd();
+  const projectDraft = starter && opening.startsWith(starter);
+  const task = projectDraft ? opening.slice(starter.length).trimStart() : opening;
+  const handoffFrom = /^Atlas handoff from ((?:codex|claude):[a-f0-9-]{36})(?:\n|$)/i.exec(task)?.[1];
+  const first = userMessages.map((m, i) => conversationTitle(i === 0 && projectDraft ? opening.slice(starter.length) : m.text)).find(Boolean) || '';
   const customTitle = [...records].reverse().find(r => r.type === 'custom-title')?.customTitle;
   const summary = [...records].reverse().find(r => r.type === 'summary')?.summary;
   const title = conversationTitle(titleEntry?.thread_name) || conversationTitle(customTitle) || conversationTitle(summary) || first.slice(0, 100) || 'Untitled conversation';
   const createdAt = dateMs(meta?.timestamp || records.find(r => r.timestamp)?.timestamp, stat.birthtimeMs || stat.mtimeMs);
-  return { key: `${provider}:${id}`, id, provider, title, cwd, project: projectName(cwd), subfolderHint: subfolderHint(records, cwd), ...turnActivity(provider, records, stat.mtimeMs), lastWriteAt: stat.mtimeMs, createdAt,
+  return { key: `${provider}:${id}`, id, provider, title, cwd, ...(handoffFrom && UUID.test(handoffFrom.split(':')[1]) ? { handoffFrom } : {}), project: projectName(cwd), ...(projectDraft ? { starterProjectKey: originalProjectKey({ cwd: folder }) } : {}), subfolderHint: subfolderHint(records, cwd), ...turnActivity(provider, records, stat.mtimeMs), lastWriteAt: stat.mtimeMs, createdAt,
     updatedAt: Math.max(stat.mtimeMs, dateMs(titleEntry?.updated_at)), preview: (messages.at(-1)?.text || '').slice(0, 700),
-    searchText: searchParts.join('\n'), messages: messages.slice(-12), file, sampled: stat.size > 384 * 1024 };
+    fileEvidence: history.files, searchText: [...history.parts].join('\n'), messages: messages.slice(-12), file, sampled: stat.size > 384 * 1024 };
 }
 async function sample(file, size) {
   const handle = await fs.open(file, 'r');
@@ -222,7 +344,12 @@ class SessionIndex {
     let cached = this.cache.get(file);
     if (!cached || cached.mtime !== stat.mtimeMs || cached.size !== stat.size) {
       const session = parseSession(provider, file, await sample(file, stat.size), stat);
-      if (session?.sampled) session.searchText = await fullSearchText(provider, file);
+      if (session?.sampled) {
+        const history = { parts:new Set(), files:new Map(), cwd:session.cwd };
+        for await (const record of transcriptRecords(file)) indexRecord(history, provider, record);
+        session.searchText = [...history.parts].join('\n');
+        session.fileEvidence = history.files;
+      }
       const evidenceAt = session?.activeTurnAt || 0;
       const missingEvidence = session?.activeTurnSignal === null;
       // A partial append or an oversized record can leave no complete activity evidence.
@@ -230,6 +357,7 @@ class SessionIndex {
       if (session && session.activeTurnSignal === null && cached?.session?.id === session.id) {
         const previous = cached.session;
         const activity = stat.size > cached.size ? await appendedActivity(file, cached.size, stat, previous) : previous;
+        session.activeFiles = activity.activeFiles;
         session.activeTurnSignal = activity.activeTurnSignal;
         session.activeTurnClosed = activity.activeTurnClosed;
         session.activeTurnAt = activity.activeTurnAt;
@@ -253,7 +381,7 @@ class SessionIndex {
         try {
           const stat = await fs.stat(session.file);
           const latest = await this.readSession(session.provider, session.file, stat);
-          if (latest?.id === session.id) return { ...session, activeTurnSignal: latest.activeTurnSignal, activeTurnAt: latest.activeTurnAt, activeTurnClosed: latest.activeTurnClosed, lastWriteAt: latest.lastWriteAt };
+          if (latest?.id === session.id) return { ...session, activeFiles: latest.activeFiles, activeTurnSignal: latest.activeTurnSignal, activeTurnAt: latest.activeTurnAt, activeTurnClosed: latest.activeTurnClosed, lastWriteAt: latest.lastWriteAt };
         } catch { /* Keep the prior observation during rotation or a partial write. */ }
         return session;
       })));
@@ -304,16 +432,23 @@ class SessionIndex {
 function reconcile(sessions, state) {
   state.topics ||= structuredClone(DEFAULT_TOPICS); state.cards ||= {}; state.customProjects ||= [];
   const topicIds = new Set(state.topics.map(t => t.id));
+  const knownProjects = new Set(projectCatalog(sessions, state.customProjects).map(p => p.key));
   for (const s of sessions) {
     const old = state.cards[s.key];
     if (!old) state.cards[s.key] = { topic: classify(s.title, s.preview, state.topics), status: 'Inbox', pinned: false, note: '', seenAt: 0 };
     else if (!topicIds.has(old.topic)) old.topic = 'general';
+    const card = state.cards[s.key];
+    if (s.handoffFrom && s.handoffFrom !== s.key) card.handoffFrom = s.handoffFrom;
+    if (s.starterProjectKey && !card.starterFiled && knownProjects.has(s.starterProjectKey)) {
+      if (!card.projectOverride && s.starterProjectKey !== originalProjectKey(s)) card.projectOverride = s.starterProjectKey;
+      card.starterFiled = true;
+    }
   }
   return state;
 }
 function publicSessions(sessions, state, now = Date.now(), runningTimeoutMs = DEFAULT_RUNNING_TIMEOUT_MS) {
   const projects = new Map(projectCatalog(sessions, state.customProjects || [], state.projectNames).map(p => [p.key, p]));
-  return sessions.map(({ file, messages, activeTurnSignal, activeTurnAt, activeTurnClosed, lastWriteAt, ...s }) => {
+  return sessions.map(({ file, fileEvidence, messages, activeTurnSignal, activeTurnAt, activeTurnClosed, lastWriteAt, ...s }) => {
     const { projectOverride, ...card } = state.cards[s.key] || {};
     const target = projects.get(projectOverride);
     const automatic = projects.get(originalProjectKey(s));
@@ -322,4 +457,4 @@ function publicSessions(sessions, state, now = Date.now(), runningTimeoutMs = DE
     return { ...s, ...card, running, title: card.title || s.title, project: target?.name || automatic?.name || s.project, ...(target ? { projectOverride } : {}) };
   });
 }
-module.exports = { DEFAULT_TOPICS, DEFAULT_RUNNING_TIMEOUT_MS, UUID, parseLines, parseSession, sample, classify, reconcile, publicSessions, SessionIndex };
+module.exports = { passages, fileMatch, DEFAULT_TOPICS, DEFAULT_RUNNING_TIMEOUT_MS, UUID, claudeProjectPrompt, parseLines, parseSession, sample, classify, reconcile, publicSessions, SessionIndex };

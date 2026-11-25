@@ -3,32 +3,126 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src 'nonce-{{nonce}}'; img-src {{cspSource}} data:;">
 <title>Chat Atlas</title><link rel="icon" type="image/png" href="{{iconUri}}"><link rel="stylesheet" href="{{styleUri}}"></head>
 <body>
+<a class="skip-link" href="#main">Skip to workspace</a>
 <div class="app">
   <aside id="project-sidebar" class="rail" aria-label="Projects">
-    <div class="brand"><img class="brand-icon" src="{{iconUri}}" width="34" height="34" alt=""><span>Chat Atlas<small id="app-version" class="brand-version">v{{version}}</small><small>YOUR CONVERSATION WORKSPACE</small></span></div>
+    <div class="brand">
+      <img class="brand-icon" src="{{iconUri}}" width="32" height="32" alt="">
+      <span>Chat Atlas<small id="app-version" class="brand-version">v{{version}}</small></span>
+      <button id="close-projects" type="button" aria-label="Close projects">×</button>
+    </div>
     <button class="nav active" id="all-projects">All projects <span id="total">0</span></button>
-    <div class="project-heading"><p class="eyebrow">PROJECTS</p><button id="new-project" class="project-add" type="button" aria-label="Create project" title="Create project">+</button><select id="project-sort" aria-label="Project sort order"><option value="alphabetical">A–Z</option><option value="manual">Manual</option></select></div><button id="subfolder-toggle" class="subfolder-toggle" type="button" aria-pressed="false">Show subfolders</button><div id="projects"></div>
+    <div class="project-heading">
+      <h2>Projects</h2>
+      <button id="new-project" class="project-add" type="button" aria-label="Create project" title="Create project">+</button>
+    </div>
+    <div class="project-tools">
+      <select id="project-sort" aria-label="Project sort order"><option value="alphabetical">A–Z</option><option value="manual">Manual</option></select>
+      <button id="subfolder-toggle" class="subfolder-toggle" type="button" aria-pressed="false">Show subfolders</button>
+    </div>
+    <div id="projects"></div>
     <button id="hidden-projects" class="hidden-projects" type="button" hidden>Hidden projects</button>
-    <div class="rail-bottom"><span class="local-dot"></span> Local on this computer<button id="settings" title="Data source settings" aria-label="Data source settings">⚙</button></div>
+    <div class="rail-bottom"><span class="local-dot"></span> Local on this computer</div>
     <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="Resize project sidebar" aria-orientation="vertical" aria-controls="project-sidebar" aria-valuemin="180" aria-valuemax="520" aria-valuenow="222" title="Drag to resize · Arrow keys adjust · Double-click or Enter resets"></div>
   </aside>
-  <main>
-    <header><div class="heading-group"><button id="sidebar-toggle" class="quiet" type="button" title="Hide project sidebar" aria-label="Hide project sidebar" aria-controls="project-sidebar" aria-expanded="true">☰</button><div><p class="eyebrow">A LITTLE ORDER. MORE FOCUS.</p><h1 id="heading">All conversations</h1><div id="project-location" class="project-location" hidden><span id="project-folder-path"></span><button id="open-project-folder" class="quiet" type="button" hidden>Open in Explorer</button><button id="rename-project" class="quiet" type="button">Rename project&#8230;</button><button id="link-project-folder" class="quiet" type="button" hidden>Link folder…</button></div><p class="subtitle" id="summary">Connecting your local conversations…</p></div></div><div class="header-actions"><button id="new-chat" class="quiet" type="button" hidden>+ Chat</button><button id="git-switch" class="quiet" type="button" aria-pressed="false" aria-controls="git-dashboard" aria-label="Git" title="Show repository branches, commit graph and local changes" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8M18 9a9 9 0 0 1-9 9"/></svg></button><button id="refresh" class="quiet">↻ Refresh</button></div></header>
+  <main id="main" tabindex="-1">
+    <header>
+      <div class="heading-group">
+        <button id="sidebar-toggle" class="icon-button" type="button" title="Hide project sidebar" aria-label="Hide project sidebar" aria-controls="project-sidebar" aria-expanded="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        </button>
+        <div>
+          <h1 id="heading">All conversations</h1>
+          <p class="subtitle" id="summary">Reading local conversations…</p>
+          <div id="project-location" class="project-location" hidden>
+            <span id="project-folder-path"></span>
+            <button id="open-project-folder" class="quiet" type="button" hidden>Open in Explorer</button>
+            <button id="rename-project" class="quiet" type="button">Rename project…</button>
+            <button id="pickup" class="quiet" type="button">Project pickup</button>
+            <button id="link-project-folder" class="quiet" type="button" hidden>Link folder…</button>
+          </div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div id="project-views" class="segments" role="group" aria-label="Project view" hidden>
+          <button id="engineering-switch" type="button" aria-pressed="false" aria-controls="engineering-panel">Engineering</button>
+          <button id="conversation-switch" aria-keyshortcuts="Control+G" title="Return to conversations (Ctrl+G)" type="button" aria-controls="board" aria-pressed="true" aria-label="Conversations"><span class="full-label">Conversations</span><span class="short-label">Chats</span></button>
+          <button id="git-switch" type="button" aria-pressed="false" aria-controls="git-dashboard" aria-label="Git" title="Show repository branches, commit graph and local changes"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8M18 9a9 9 0 0 1-9 9"/></svg> Git</button>
+        </div>
+        <button id="new-chat" class="quiet" type="button" hidden>New chat</button>
+        <div class="header-utilities">
+          <button id="settings" class="icon-button" type="button" aria-label="Settings" title="Open Chat Atlas settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h7m5 0h4M4 17h2m5 0h9"/><circle cx="13.5" cy="7" r="2.5"/><circle cx="8.5" cy="17" r="2.5"/></svg></button>
+          <button id="feedback" class="icon-button" type="button" aria-label="Report a bug or request a feature" title="Report a bug or request a feature"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4-1-2m7 2 1-2M9 7V6a3 3 0 0 1 6 0v1M4 9l3 2m-3 5h3m-2 5 3-3m12-9-3 2m3 5h-3m2 5-3-3M12 8v13"/><rect x="7" y="7" width="10" height="14" rx="5"/></svg></button>
+          <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 5v5h-5M4 19v-5h5"/><path d="M5.4 9a7 7 0 0 1 11.9-3L20 9M4 15l2.7 3A7 7 0 0 0 18.6 15"/></svg></button>
+        </div>
+      </div>
+    </header>
     <section id="sources" class="sources" aria-label="Connected sources"></section>
+    <div class="toolbar">
+      <div class="segments" role="group" aria-label="Board view"><button data-view="timeline" class="active">Timeline</button><button data-view="workflow">Workflow</button><button data-view="topics">Topics</button></div>
+      <label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="search" name="search" type="search" autocomplete="off" placeholder="Find a conversation…" aria-label="Search conversations" aria-keyshortcuts="/"><kbd aria-hidden="true">/</kbd></label>
+      <button id="new-topic" class="quiet">+ Topic</button>
+    </div>
+    <div class="filterbar">
+      <div class="provider-filters" role="group" aria-label="Provider filter"><button data-provider="all" class="active">All</button><button data-provider="codex">Codex</button><button data-provider="claude">Claude Code</button></div>
+      <label class="done-filter"><input id="show-done" type="checkbox"> Show done <span id="done-count">0</span></label>
+      <span id="order-label">Newest first</span>
+    </div>
     <section id="focus-strip" class="focus-strip" aria-label="Pinned conversations" hidden></section>
-    <div class="toolbar"><div class="segments" aria-label="Board view"><button data-view="timeline" class="active">Timeline</button><button data-view="workflow">Workflow</button><button data-view="topics">Topics</button></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a conversation…" aria-label="Search conversations"><kbd>/</kbd></label><button id="new-topic" class="quiet">+ Topic</button></div>
-    <div class="filterbar"><div class="provider-filters" aria-label="Provider filter"><button data-provider="all" class="active">All</button><button data-provider="codex">Codex</button><button data-provider="claude">Claude Code</button></div><label class="done-filter"><input id="show-done" type="checkbox"> Show done <span id="done-count">0</span></label><span id="order-label">Created newest first · cards stay put</span></div>
     <div id="notice" class="notice" role="status" hidden></div>
     <div id="errors" class="errors" role="status"></div>
     <div id="batch-actions" class="batch-actions" role="group" aria-label="Selected conversations" hidden><span id="batch-count" role="status"></span><label>Change status <select id="batch-status" aria-label="Status for selected conversations"><option>Inbox</option><option>In progress</option><option>Waiting</option><option>Done</option></select></label><button id="batch-apply" class="quiet" type="button">Apply</button><button id="batch-clear" type="button">Clear selection</button></div>
+    <section id="engineering-panel" aria-label="Engineering" hidden>
+      <div class="engineering-toolbar">
+        <div class="segments" role="group" aria-label="Engineering view">
+          <button type="button" data-engineering-view="overview" aria-pressed="true">Overview</button>
+          <button type="button" data-engineering-view="architecture" aria-pressed="false">Architecture</button>
+          <button type="button" data-engineering-view="quality" aria-pressed="false">Quality</button>
+          <button type="button" data-engineering-view="impact" aria-pressed="false">Impact</button>
+          <button type="button" id="engineering-changes">Changes</button>
+        </div>
+        <div class="engineering-actions">
+          <button type="button" class="quiet" id="engineering-brief" hidden>Copy quality brief</button>
+          <button type="button" class="quiet" id="engineering-refresh">Refresh analysis</button>
+          <button type="button" class="quiet" id="engineering-cancel" hidden>Cancel</button>
+          <button type="button" class="quiet" id="engineering-clear" hidden>Clear snapshot</button>
+        </div>
+      </div>
+      <p id="engineering-status" role="status"></p>
+      <div id="engineering-filters" class="engineering-toolbar" hidden>
+        <label>Find files <input type="search" id="engineering-search" maxlength="256" autocomplete="off"></label>
+        <label>Folder <select id="engineering-module"><option value="">All folders</option></select></label>
+        <label id="engineering-depth-label">Depth <select id="engineering-depth"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></label>
+      </div>
+      <div id="engineering-content"></div>
+    </section>
     <section id="git-dashboard" aria-label="Git dashboard" hidden></section>
     <section id="board" class="board" aria-label="Conversations"></section>
-    <footer><span id="visible-count"></span><span>Drag cards to organize · Tick to finish · Click to resume</span></footer>
+    <footer><span id="visible-count"></span></footer>
   </main>
   <aside id="detail" class="detail" aria-label="Conversation details" hidden></aside>
 </div>
-<dialog id="topic-dialog"><form id="topic-form"><div class="dialog-head"><h2>New topic</h2><button type="button" id="cancel-topic" aria-label="Close">×</button></div><label>Topic name<input id="topic-name" required maxlength="50" placeholder="e.g. Performance engineer"></label><label>Auto-group keywords<input id="topic-keywords" maxlength="300" placeholder="telemetry engineer performance"></label><p>New conversations matching these words land here. Existing cards stay where you left them.</p><button class="primary" type="submit">Create topic</button></form></dialog>
+<dialog id="project-drawer" aria-label="Projects"></dialog>
+<dialog id="pickup-dialog" aria-labelledby="pickup-title">
+  <div class="dialog-head"><h2 id="pickup-title">Project pickup</h2><button type="button" id="pickup-close" aria-label="Close project pickup">×</button></div>
+  <div id="pickup-list"></div>
+</dialog>
+<dialog id="handoff-dialog" aria-labelledby="handoff-title">
+  <form id="handoff-form">
+    <div class="dialog-head"><h2 id="handoff-title">Hand off conversation</h2><button id="handoff-close" type="button" aria-label="Close handoff">×</button></div>
+    <label>Use an excerpt<select id="handoff-excerpt"><option value="">Write your own decision</option></select></label>
+    <label>Decision<textarea id="handoff-decision" maxlength="12000" rows="3"></textarea></label>
+    <div class="handoff-file-head"><label for="handoff-paths">Relevant files</label><button id="handoff-files" type="button" class="quiet">Choose files…</button></div>
+    <textarea id="handoff-paths" maxlength="8000" rows="2" placeholder="One path per line"></textarea>
+    <label>Next step<textarea id="handoff-next" maxlength="5000" rows="2" required></textarea></label>
+    <details><summary>Preview handoff</summary><pre id="handoff-preview"></pre></details>
+    <p>Paste the handoff into the new chat and send it when ready. Keep the source line to link the conversations in Atlas.</p>
+    <div class="handoff-controls"><label>New chat in<select id="handoff-provider"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label><button id="handoff-submit" class="primary" type="submit">Copy and open chat</button></div>
+    <p id="handoff-error" role="alert"></p>
+  </form>
+</dialog>
+<dialog id="topic-dialog" aria-labelledby="topic-dialog-title"><form id="topic-form"><div class="dialog-head"><h2 id="topic-dialog-title">New topic</h2><button type="button" id="cancel-topic" aria-label="Close">×</button></div><label>Topic name<input id="topic-name" required maxlength="50" placeholder="e.g. Performance engineer"></label><label>Auto-group keywords<input id="topic-keywords" maxlength="300" placeholder="telemetry engineer performance"></label><p>New conversations matching these words land here. Existing cards stay where you left them.</p><button class="primary" type="submit">Create topic</button></form></dialog>
 <dialog id="project-dialog" aria-labelledby="project-dialog-title"><form id="project-form"><div class="dialog-head"><h2 id="project-dialog-title">New project</h2><button type="button" id="cancel-project" aria-label="Close">×</button></div><label>Project name<input id="project-name" required maxlength="80" placeholder="e.g. Chat Atlas"></label><label for="project-folder" id="project-folder-label">Existing folder (optional)</label><div class="folder-input"><input id="project-folder" maxlength="4096" placeholder="e.g. C:\Code\chat-atlas"><button id="browse-project-folder" class="quiet" type="button">Browse…</button></div><p id="project-dialog-note">Leave the folder blank for a board-only label. A folder-backed project will also receive future chats started there.</p><p id="project-error" role="alert" hidden></p><button id="project-submit" class="primary" type="submit">Create project</button></form></dialog>
-<dialog id="new-chat-dialog" aria-labelledby="new-chat-title"><div class="dialog-head"><h2 id="new-chat-title">New project chat</h2><button id="close-new-chat" type="button" aria-label="Close">×</button></div><p id="new-chat-location"></p><p>Both providers open in the selected project folder. Claude chats in other projects open in native editor tabs, keeping your other chats open without reloading VS Code. The card appears after your first message. The provider's extension must be installed and signed in.</p><div class="new-chat-options"><button id="new-chat-codex" class="primary" type="button">Codex</button><button id="new-chat-claude" class="quiet" type="button">Claude Code</button></div></dialog>
+<dialog id="new-chat-dialog" aria-labelledby="new-chat-title"><div class="dialog-head"><h2 id="new-chat-title">New project chat</h2><button id="close-new-chat" type="button" aria-label="Close">×</button></div><p id="new-chat-location"></p><p>Codex starts in this folder. Claude opens its sidebar, or a terminal in this folder when Claude chats are set to open in the terminal. For another project, the draft includes the folder above. Add your task and send when ready.</p><div class="new-chat-options"><button id="new-chat-codex" class="primary" type="button">Codex</button><button id="new-chat-claude" class="quiet" type="button">Claude Code</button></div></dialog>
 <dialog id="hidden-projects-dialog" aria-labelledby="hidden-projects-title"><div class="dialog-head"><h2 id="hidden-projects-title">Hidden projects</h2><button id="close-hidden-projects" type="button" aria-label="Close hidden projects">×</button></div><p>Hidden projects remain in All projects. Restore any entry to the sidebar.</p><div id="hidden-project-list"></div></dialog>
 <script nonce="{{nonce}}" src="{{projectsUri}}"></script><script nonce="{{nonce}}" src="{{scriptUri}}"></script></body></html>

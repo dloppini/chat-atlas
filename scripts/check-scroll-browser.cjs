@@ -40,6 +40,13 @@ async page => {
     let before = await position();
     await clickVisible('detail');
     await steady(`${width}: select details`, before);
+    const note = page.getByLabel('Your handoff note');
+    await note.focus();
+    await note.fill('Unsaved draft');
+    await page.evaluate(() => window.postMessage({type:'detail', key:JSON.parse(localStorage.getItem('atlasDemoUi')).selected, messages:[]}));
+    await page.getByText('No excerpts available.', {exact:true}).waitFor();
+    if (await note.inputValue() !== 'Unsaved draft' || !await note.evaluate(n => n === document.activeElement)) throw Error('Excerpt refresh replaced the active draft');
+    await note.fill('');
     await page.getByRole('button', { name: 'Close details', exact: true }).click();
     await steady(`${width}: close details`, before);
     await page.evaluate(() => {

@@ -16,6 +16,7 @@ async page => {
     if(metrics.overflow)throw Error('Page overflow: '+width+' '+theme);
     results.push({width,theme,...metrics});
   }
+  if(await page.getByRole('button',{name:'Fit window',exact:true}).getAttribute('aria-pressed')==='true')await page.getByRole('button',{name:'Fit window',exact:true}).click();
   await page.getByRole('spinbutton',{name:'Tree height in pixels'}).fill('220');
   await page.getByRole('spinbutton',{name:'Tree height in pixels'}).press('Tab');
   await page.getByRole('spinbutton',{name:'Diff height in pixels'}).fill('420');
@@ -34,7 +35,7 @@ async page => {
   if(numbered[1]!=='1')throw Error('Added content line numbering failed');
   await page.evaluate(()=>{const request=window.atlasMessages.filter(m=>m.type==='gitDiff').at(-1);window.postMessage({type:'gitDiff',projectKey:request.projectKey,requestId:request.requestId,diff:{files:['src/git.js'],file:'src/git.js',patch:'diff --git a/src/git.js b/src/git.js\nBinary files differ',truncated:false}});});
   await page.waitForFunction(()=>document.querySelector('.git-patch')?.textContent.includes('Binary files differ'));
-  await page.getByRole('button',{name:'Chats',exact:true}).focus();
+  await page.getByRole('button',{name:'Conversations',exact:true}).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('button',{name:'Git',exact:true}).waitFor();
   await page.reload();

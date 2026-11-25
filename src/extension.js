@@ -1,14 +1,17 @@
 'use strict';
 const vscode = require('vscode');
 const fs = require('node:fs/promises');
+const { registerFiles, registerActivity } = require('./chat-files');
+const { configureExplorerMenu } = require('./explorer-menu');
 const { watch } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { readGitDashboard, readGitDiff } = require('./git');
+const { readGitDashboard, readGitDiff, runGitOperation } = require('./git');
+const { createEngineering } = require('./engineering');
 const crypto = require('node:crypto');
-const { SessionIndex, reconcile, publicSessions, UUID } = require('./core');
+const { SessionIndex, reconcile, publicSessions, UUID, passages, fileMatch } = require('./core');
 const { openNativeSession, openNewProjectChat } = require('./providers');
-const { projectGroupKey, originalProjectKey, projectCatalog, linkProjectFolder, remapProjectKeys } = require('../media/projects');
+const { projectGroupKey, originalProjectKey, projectCatalog, effectiveSubfolder, linkProjectFolder, reconnectProjectFolder, remapProjectKeys } = require('../media/projects');
 
 function activate(context) {
   let panel, timer, activityTimer, activityWakeTimer, current = { sessions: [], sources: [], errors: [] }, subfolders = {}, busy = false, activityBusy = false, disposed = false;
@@ -16,9 +19,55 @@ function activate(context) {
   let state = context.globalState.get('boardState', { topics: null, cards: {} });
   let sidebarPreferences = context.globalState.get('sidebarPreferences', { projectSort: 'alphabetical', projectOrder: [], hiddenProjects: [], showSubfolders: false });
   const index = new SessionIndex();
+  const activity = registerActivity(vscode, context);
+  const browseFiles = registerFiles(vscode, context, activity);
+  const highlight = () => vscode.workspace.getConfiguration('chatAtlas').get('highlightActiveFiles', false);
+  const monitoring = () => panel?.visible || highlight();
+  let boardReady = false, pendingFolder, pendingProject;
+  function presentProject() {
+    if (boardReady && pendingProject) {
+      post({ type: 'projectPicked', key: pendingProject });
+      pendingProject = undefined;
+    }
+  }
+  function presentFolder() {
+    if (boardReady && pendingFolder) {
+      post({ type: 'draftProject', folder: pendingFolder, name: path.basename(pendingFolder) || pendingFolder });
+      pendingFolder = undefined;
+    }
+  }
+  function located(session) {
+    const cwd = state.relocatedFolders?.[originalProjectKey(session)];
+    return cwd ? { ...session, cwd, project: path.basename(cwd) || cwd } : session;
+  }
+  const locatedSessions = () => state.relocatedFolders ? current.sessions.map(located) : current.sessions;
+  const catalog = () => projectCatalog(locatedSessions(), state.customProjects || [], state.projectNames);
   let writeQueue = Promise.resolve();
   const save = () => { const snapshot = structuredClone(state); writeQueue = writeQueue.then(() => context.globalState.update('boardState', snapshot)); return writeQueue; };
   const post = data => panel?.webview.postMessage(data);
+  const engineering = createEngineering({
+    storage: context.globalState, catalog, post, local: !vscode.env.remoteName,
+    compiler() {
+      const bundled = vscode.extensions?.getExtension('vscode.typescript-language-features');
+      if (!bundled?.extensionPath || !vscode.env.appRoot) return;
+      const relative = path.relative(path.join(vscode.env.appRoot, 'extensions'), bundled.extensionPath);
+      if (relative !== 'typescript-language-features') return;
+      for (const folder of [path.dirname(bundled.extensionPath), bundled.extensionPath]) {
+        try {
+          const ts = require(path.join(folder, 'node_modules', 'typescript', 'lib', 'typescript.js'));
+          if (ts.preProcessFile && ts.resolveModuleName) return ts;
+        } catch { /* Git and file metadata remain available without the bundled compiler. */ }
+      }
+    },
+    async openFile(file, line) {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const position = new vscode.Position(Math.min(line, doc.lineCount) - 1, 0);
+      await vscode.window.showTextDocument(doc, { preview: true, selection: new vscode.Range(position, position) });
+    },
+    copy: value => vscode.env.clipboard.writeText(value)
+  });
+  const openSettings = () => vscode.commands.executeCommand('workbench.action.openSettings2', { query: '@ext:lpx.lpx-conversation-board' });
+  const sendTheme = () => post({ type: 'theme', theme: vscode.workspace.getConfiguration('chatAtlas').get('theme', 'system') });
   function settings() {
     const c = vscode.workspace.getConfiguration('chatAtlas');
     return { codexHome: c.get('codexHome') || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claudeHome: c.get('claudeHome') || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), maxSessions: c.get('maxSessions', 1000) };
@@ -26,15 +75,16 @@ function activate(context) {
   const visibleSessions = () => {
     const minutes = vscode.workspace.getConfiguration('chatAtlas').get('runningTimeoutMinutes', 60);
     const timeout = Number.isFinite(minutes) ? Math.max(5, Math.min(1440, minutes)) * 60000 : 60 * 60000;
-    return publicSessions(current.sessions, state, Date.now(), timeout);
+    return publicSessions(locatedSessions(), state, Date.now(), timeout);
   };
   const publish = () => {
     const sessions = visibleSessions();
+    activity.update(highlight() ? sessions : []);
     publishedRunning = new Map(sessions.map(s => [s.key, s.running]));
-    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: projectCatalog(current.sessions, state.customProjects || [], state.projectNames), sidebarPreferences, subfolders, busy });
+    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: catalog(), sidebarPreferences, subfolders, busy });
   };
   async function refreshActivity() {
-    if (disposed || busy || activityBusy || !panel?.visible) return;
+    if (disposed || busy || activityBusy || !monitoring()) return;
     activityBusy = true;
     const snapshot = current;
     try {
@@ -42,7 +92,9 @@ function activate(context) {
       // A full scan may have finished while the lightweight activity check was reading.
       if (disposed || current !== snapshot || busy) return;
       current = { ...current, sessions };
-      const changes = visibleSessions().filter(s => publishedRunning.get(s.key) !== s.running).map(s => ({ key: s.key, running: s.running }));
+      const visible = visibleSessions();
+      if (highlight()) activity.update(visible);
+      const changes = visible.filter(s => publishedRunning.get(s.key) !== s.running).map(s => ({ key: s.key, running: s.running }));
       if (changes.length) {
         for (const s of changes) publishedRunning.set(s.key, s.running);
         post({ type: 'activity', sessions: changes });
@@ -64,7 +116,7 @@ function activate(context) {
     for (const root of roots) {
       try {
         const watcher = watch(root, { recursive: true }, (_event, filename) => {
-          if (!panel?.visible || (filename && !filename.toString().endsWith('.jsonl'))) return;
+          if (!monitoring() || (filename && !filename.toString().endsWith('.jsonl'))) return;
           const file = filename ? path.join(root, filename.toString()) : '';
           const known = file && current.sessions.some(s => s.file === file);
           discoveryPending ||= !known;
@@ -72,7 +124,7 @@ function activate(context) {
           activityWakeTimer = setTimeout(() => {
             activityWakeTimer = undefined;
             const discover = discoveryPending; discoveryPending = false;
-            if (panel?.visible) void (discover ? refresh() : refreshActivity());
+            if (monitoring()) void (discover ? refresh() : refreshActivity());
           }, 300);
         });
         watcher.on('error', () => { watcher.close(); watchedRoots = ''; });
@@ -105,38 +157,132 @@ function activate(context) {
     }));
     return found;
   }
-  async function refresh() {
-    if (busy || disposed) return;
+  let refreshTask;
+  function refresh() {
+    if (disposed) return;
+    if (!refreshTask) refreshTask = scan().finally(() => { refreshTask = undefined; });
+    return refreshTask;
+  }
+  async function scan() {
     busy = true; publish();
-    try { current = await index.scan(settings()); subfolders = await scanSubfolders(current.sessions); reconcile(current.sessions, state); await save(); }
+    try { current = await index.scan(settings()); const sessions = locatedSessions(); subfolders = await scanSubfolders(sessions); reconcile(sessions, state); await save(); }
     catch (e) { current.errors = [`Refresh failed: ${e.message}`]; }
     finally { busy = false; if (!disposed) { publish(); if (panel) watchHistory(); } }
   }
-  async function openSession(s, editor = false, terminalOnly = false) {
+  async function openSession(s, editor = false, terminalOnly = false, foreground = false) {
     if (!UUID.test(s.id)) throw new Error('Invalid session identifier.');
     if (!terminalOnly) {
       if (await openNativeSession(vscode, s, editor)) return;
       throw new Error(`The ${s.provider === 'claude' ? 'Claude Code' : 'Codex'} chat UI is unavailable. Choose "Start in hidden terminal" if you want the CLI.`);
     }
+    const cwd = s.cwd ? await validateProjectFolder(s.cwd, true) : undefined;
     const command = s.provider === 'claude' ? `claude --resume ${s.id}` : `codex resume ${s.id}`;
-    const existing = vscode.window.terminals.find(t => t.name === `Atlas: ${s.id.slice(0, 8)}`);
+    const name = `Atlas: ${s.provider} ${s.id}`;
+    const existing = vscode.window.terminals.find(terminal => {
+      const options = terminal.creationOptions;
+      if ((options?.name || terminal.name) !== name) return false;
+      const folder = options?.cwd;
+      return !folder || originalProjectKey({ cwd: folder.fsPath || folder }) === originalProjectKey(s);
+    });
     if (existing) {
+      if (foreground) { existing.show(); return; }
       post({ type: 'notice', text: 'This session is already running in a hidden terminal. Open the Terminal panel to interact with it.' });
       return;
     }
     // Only a validated UUID enters the shell. Conversation text never becomes a command.
-    let cwd;
-    try { if (s.cwd && (await fs.stat(s.cwd)).isDirectory()) cwd = s.cwd; } catch { /* Original project may have moved. */ }
-    const terminal = vscode.window.createTerminal({ name: `Atlas: ${s.id.slice(0, 8)}`, cwd });
+    const terminal = vscode.window.createTerminal({ name, cwd, ...(s.provider === 'claude' ? { env: { CLAUDE_CONFIG_DIR: settings().claudeHome } } : {}) });
     terminal.sendText(command, true);
+    if (foreground) { terminal.show(); return; }
     post({ type: 'notice', text: `Started ${s.provider === 'claude' ? 'Claude Code' : 'Codex'} in a hidden terminal. Open the Terminal panel to interact with it.` });
+  }
+  // New chats follow the same Claude preference as opening a tile: the terminal when chosen, otherwise the provider's chat UI.
+  async function startChat(provider, cwd, projectName) {
+    if (provider !== 'claude' || vscode.workspace.getConfiguration('chatAtlas').get('claudeTileAction') !== 'terminal') {
+      return openNewProjectChat(vscode, provider, cwd, { codexHome: settings().codexHome, projectName });
+    }
+    const terminal = vscode.window.createTerminal({ name: `Atlas: claude ${projectName || 'new chat'}`.slice(0, 80), cwd, env: { CLAUDE_CONFIG_DIR: settings().claudeHome } });
+    terminal.sendText('claude', true);
+    terminal.show();
+  }
+  async function resumeCard(s, options = {}) {
+    const foreground = !options.native && !options.editor && !options.terminal && s.provider === 'claude'
+      && vscode.workspace.getConfiguration('chatAtlas').get('claudeTileAction') === 'terminal';
+    await openSession(s, options.editor === true, foreground || options.terminal === true, foreground);
+    state.cards[s.key].seenAt = s.updatedAt;
+    await save();
+  }
+  async function findChatsForFile(resource) {
+    const uri = resource?.uri || resource || vscode.window.activeTextEditor?.document.uri;
+    try {
+      if (uri?.scheme !== 'file') throw new Error('Choose a local file in Explorer or open it in the editor.');
+      const items = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification, title:'Finding chats for ' + path.basename(uri.fsPath), cancellable:true}, async (_, token) => {
+        await refresh();
+        const results = [];
+        const rank = { Edited:0, Read:1, Mentioned:2 };
+        for (const session of current.sessions) {
+          if (token.isCancellationRequested) return;
+          let match;
+          try { match = await fileMatch(session, uri.fsPath, located(session).cwd, token); }
+          catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+          if (match) results.push({ label:state.cards[session.key]?.title || session.title, description:match.kind + ' · ' + session.provider, detail:match.evidence.slice(0,400), session, rank:rank[match.kind] });
+        }
+        return results.sort((a,b) => a.rank-b.rank || b.session.updatedAt-a.session.updatedAt);
+      });
+      if (!items) return;
+      if (!items.length) { vscode.window.showInformationMessage('No indexed chats reference ' + path.basename(uri.fsPath)); return; }
+      const picked = await vscode.window.showQuickPick(items, { title:'Chats for ' + path.basename(uri.fsPath), placeHolder:'Choose a conversation to resume', matchOnDetail:true });
+      if (picked) { await resumeCard(located(picked.session)); publish(); }
+    } catch (error) { vscode.window.showErrorMessage('Chat Atlas: ' + error.message); }
+  }
+  async function openPassage(session, query) {
+    if (!query) query = await vscode.window.showInputBox({title:'Find a passage', prompt:'Search this conversation'});
+    if (!query?.trim()) return;
+    const hits = await passages(session, query);
+    if (!hits.length) { post({type:'notice', text:'No single message matches these words in this conversation.'}); return; }
+    const hit = await vscode.window.showQuickPick(hits, {title:'Matching passages · ' + (state.cards[session.key]?.title || session.title), placeHolder:'Open a passage with its surrounding exchange'});
+    if (!hit) return;
+    const exchange = await passages(session, query, hit.line);
+    if (!exchange) throw new Error('The transcript changed. Search again.');
+    const section = msg => (msg.role === 'user' ? 'You' : session.provider) + '\n' + msg.text;
+    const before = exchange.before ? section(exchange.before) + '\n\n' : '';
+    const content = before + section(exchange.message) + (exchange.after ? '\n\n' + section(exchange.after) : '');
+    const doc = await vscode.workspace.openTextDocument({content, language:'plaintext'});
+    const offset = exchange.message.text.toLowerCase().indexOf(query.trim().split(/\s+/)[0].toLowerCase());
+    const start = before.length + section(exchange.message).length - exchange.message.text.length + Math.max(0,offset);
+    await vscode.window.showTextDocument(doc, {preview:true, selection:new vscode.Range(doc.positionAt(start),doc.positionAt(start + query.trim().split(/\s+/)[0].length))});
   }
   async function onMessage(m) {
     if (!m || typeof m.type !== 'string') return;
     try {
-      if (m.type === 'ready') { publish(); await refresh(); return; }
+      if (m.type.startsWith('engineering') && await engineering.handle(m)) return;
+      if (m.type === 'ready') {
+        const config = vscode.workspace.getConfiguration('chatAtlas');
+        if (['pearl', 'dark'].includes(m.legacyTheme) && config.inspect('theme')?.globalValue === undefined) {
+          await config.update('theme', m.legacyTheme, vscode.ConfigurationTarget.Global);
+        }
+        sendTheme(); boardReady = true; publish(); presentFolder(); presentProject(); await refresh(); return; }
       if (m.type === 'refresh') { await refresh(); return; }
-      if (m.type === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettings', 'chatAtlas'); return; }
+      if (m.type === 'settings') { await openSettings(); return; }
+      if (m.type === 'feedback') {
+        const choice = await vscode.window.showQuickPick([
+          { label:'$(bug) Report a bug', id:'bug', detail:'Describe what went wrong and how to reproduce it.' },
+          { label:'$(lightbulb) Request a feature', id:'feature', detail:'Describe what you need and how it would help.' },
+          { label:'$(issues) View existing reports', id:'browse', detail:'Check known issues, follow progress, or join an existing discussion.' }
+        ], { title:'Chat Atlas feedback', placeHolder:'Public GitHub reports. Sign in to create or comment; review your draft before posting.' });
+        if (!choice) return;
+        const manifest = require('../package.json');
+        let url = manifest.bugs.url;
+        if (choice.id !== 'browse') {
+          const bug = choice.id === 'bug';
+          const body = bug
+            ? '## What happened?\n\n\n## Steps to reproduce\n\n1. \n\n## What did you expect?\n\n'
+            : '## What would you like to do?\n\n\n## Why would this help?\n\n\n## Suggested behavior\n\n';
+          const environment = `\n## Environment\n\n- Chat Atlas: ${manifest.version}\n- VS Code: ${vscode.version}\n- Platform: ${process.platform} (${process.arch})\n`;
+          url += '/new?title=' + encodeURIComponent(bug ? '[Bug] ' : '[Feature] ') + '&body=' + encodeURIComponent(body + environment + '\n<!-- Reports are public. Remove private conversation text, credentials and personal file paths before submitting. -->');
+        }
+        if (!await vscode.env.openExternal(vscode.Uri.parse(url))) throw new Error('Could not open GitHub. Try https://github.com/dloppini/chat-atlas/issues in your browser.');
+        return;
+      }
       if (m.type === 'sidebarPreferences') {
         const p = m.preferences || {};
         const keys = value => Array.isArray(value) ? [...new Set(value.filter(key => typeof key === 'string' && key.length <= 4096).slice(0, 20000))] : [];
@@ -164,7 +310,9 @@ function activate(context) {
       }
       if (m.type === 'linkProjectFolder') {
         const cwd = await validateProjectFolder(m.folder, true);
-        const key = linkProjectFolder(state, m.projectKey, cwd);
+        const project = catalog().find(item => item.key === m.projectKey);
+        const key = project?.cwd ? reconnectProjectFolder(state, project, cwd) : linkProjectFolder(state, m.projectKey, cwd);
+        if (key === m.projectKey) { post({ type: 'projectFolderLinked', previousKey: key, key }); return; }
         if (state.projectNames?.[m.projectKey]) {
           state.projectNames[key] = state.projectNames[m.projectKey]; delete state.projectNames[m.projectKey];
         }
@@ -173,11 +321,11 @@ function activate(context) {
         const snapshot = structuredClone(sidebarPreferences);
         writeQueue = writeQueue.then(() => context.globalState.update('sidebarPreferences', snapshot));
         await writeQueue;
-        subfolders = await scanSubfolders(current.sessions);
+        subfolders = await scanSubfolders(locatedSessions());
         publish(); post({ type: 'projectFolderLinked', previousKey: m.projectKey, key }); return;
       }
       if (m.type === 'openProjectFolder') {
-        const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
+        const project = catalog().find(item => item.key === m.projectKey);
         if (!project?.cwd) throw new Error('Link this project to a folder before opening it in Explorer.');
         const subfolder = typeof m.subfolder === 'string' ? m.subfolder : '';
         if (subfolder && !(subfolders[m.projectKey] || []).includes(subfolder)) throw new Error('The project subfolder is unavailable. Refresh the board and try again.');
@@ -185,11 +333,21 @@ function activate(context) {
         if (!await vscode.env.openExternal(vscode.Uri.file(folder))) throw new Error('Windows Explorer could not open the folder.');
         return;
       }
-      if (m.type === 'gitDashboard' || m.type === 'gitDiff') {
+      if (m.type === 'gitDashboard' || m.type === 'gitDiff' || m.type === 'gitOperation') {
         try {
-          const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
+          const project = catalog().find(item => item.key === m.projectKey);
           if (!project?.cwd) throw new Error('Link this project to a folder to view its Git repository.');
           const cwd = await validateProjectFolder(project.cwd, true);
+          if (m.type === 'gitOperation') {
+            if (vscode.workspace.isTrusted !== true) throw new Error('Trust this workspace before running Git operations.');
+            const result = await runGitOperation(cwd, m.action, m.head, m.branch, { files: m.files, message: m.message, indexVersion: m.indexVersion, remote: m.remote });
+            let message = result;
+            if (m.action === 'createPr') {
+              if (!await vscode.env.openExternal(vscode.Uri.parse(result.url))) throw new Error('Could not open Azure DevOps. Check your default browser and try again.');
+              message = 'Azure PR form opened. Review the target branch, title and reviewers, then create the PR in your browser.';
+            }
+            post({ type: m.type, projectKey: m.projectKey, requestId: m.requestId, message }); return;
+          }
           post({ type: m.type, projectKey: m.projectKey, requestId: m.requestId, ...(m.type === 'gitDiff' ? { diff: await readGitDiff(cwd, m) } : { dashboard: await readGitDashboard(cwd, m.focusRef) }) });
         } catch (error) {
           post({ type: m.type, projectKey: m.projectKey, requestId: m.requestId, error: error.message });
@@ -197,16 +355,16 @@ function activate(context) {
         return;
       }
       if (m.type === 'newChat') {
-        const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
+        const project = catalog().find(item => item.key === m.projectKey);
         if (!project?.cwd) throw new Error('Link this project to an existing folder before starting a chat.');
         let stat;
         try { stat = await fs.stat(project.cwd); } catch { throw new Error('The project folder is unavailable.'); }
         if (!stat.isDirectory()) throw new Error('The project path must be a folder.');
-        await openNewProjectChat(vscode, m.provider, project.cwd, { codexHome: settings().codexHome, projectName: project.name });
+        await startChat(m.provider, project.cwd, project.name);
         return;
       }
       if (m.type === 'renameProject') {
-        const project = projectCatalog(current.sessions, state.customProjects || [], state.projectNames).find(item => item.key === m.projectKey);
+        const project = catalog().find(item => item.key === m.projectKey);
         if (!project) throw new Error('The project is unavailable. Refresh the board and try again.');
         const validateInput = value => !value.trim() || value.trim().length > 80 ? 'Choose a project name of 1 to 80 characters.' : null;
         const value = await vscode.window.showInputBox({ title: 'Rename project', prompt: 'Change the board name. The folder and chat assignments stay unchanged.', value: project.name, validateInput });
@@ -223,10 +381,10 @@ function activate(context) {
         const name = typeof m.name === 'string' ? m.name.trim() : '';
         if (!name || name.length > 80) throw new Error('Choose a project name of 1 to 80 characters.');
         const cwd = await validateProjectFolder(m.folder);
-        const existing = projectCatalog(current.sessions, state.customProjects || [], state.projectNames);
+        const existing = catalog();
         const key = cwd ? originalProjectKey({ cwd }) : '';
         if (cwd && existing.some(p => p.key === key)) {
-          if (s) { if (key === originalProjectKey(s)) delete state.cards[s.key].projectOverride; else state.cards[s.key].projectOverride = key; delete state.cards[s.key].subfolder; await save(); }
+          if (s) { if (key === originalProjectKey(located(s))) delete state.cards[s.key].projectOverride; else state.cards[s.key].projectOverride = key; delete state.cards[s.key].subfolder; await save(); }
           await publish(); post({ type: 'projectCreated', key }); return;
         }
         if (!cwd && existing.some(p => p.name.toLowerCase() === name.toLowerCase())) throw new Error('A project with that name already exists. Select it instead.');
@@ -236,7 +394,7 @@ function activate(context) {
         state.customProjects.push({ id, name, ...(cwd ? { cwd } : {}) });
         const createdKey = cwd ? key : `custom:${id}`;
         if (s) { state.cards[s.key].projectOverride = createdKey; delete state.cards[s.key].subfolder; }
-        if (cwd) subfolders = await scanSubfolders(current.sessions);
+        if (cwd) subfolders = await scanSubfolders(locatedSessions());
         await save(); await publish(); post({ type: 'projectCreated', key: createdKey }); return;
       }
       if (m.type === 'batchStatus') {
@@ -248,18 +406,46 @@ function activate(context) {
         }
         await save(); publish(); return;
       }
-      const s = current.sessions.find(s => s.key === m.key);
-      if (!s) return;
+      const recorded = current.sessions.find(s => s.key === m.key);
+      if (!recorded) return;
+      const s = located(recorded);
       const card = state.cards[s.key];
+      if (m.type === 'passages') {
+        await openPassage(recorded, typeof m.query === 'string' ? m.query.trim().slice(0,1000) : '');
+        return;
+      }
+      if (m.type === 'handoffFiles') {
+        const files = await vscode.window.showOpenDialog({title:'Choose handoff files', canSelectFiles:true, canSelectFolders:false, canSelectMany:true, defaultUri:s.cwd ? vscode.Uri.file(s.cwd) : undefined});
+        if (files?.length) post({type:'handoffFiles', key:s.key, requestId:m.requestId, files:files.filter(uri => uri.scheme === 'file').map(uri => uri.fsPath)});
+        return;
+      }
+      if (m.type === 'handoff') {
+        if (!['codex','claude'].includes(m.provider) || typeof m.text !== 'string' || !m.text.trim() || m.text.length > 32000) throw new Error('Choose a provider and keep the handoff under 32,000 characters.');
+        const project = catalog().find(item => item.key === (card.projectOverride || originalProjectKey(s)));
+        const cwd = await validateProjectFolder(project?.cwd || s.cwd, true);
+        await vscode.env.clipboard.writeText('Atlas handoff from ' + s.key + '\n\n' + m.text.trim());
+        await startChat(m.provider, cwd, project?.name || s.project);
+        post({type:'handoffStarted', key:s.key, requestId:m.requestId});
+        return;
+      }
       if (m.type === 'select') {
         card.seenAt = s.updatedAt; await save();
         post({ type: 'detail', key: s.key, messages: s.messages, sampled: s.sampled }); publish();
       }
-      if (m.type === 'open') { await openSession(s, m.editor === true, m.terminal === true); card.seenAt = s.updatedAt; await save(); publish(); }
+      if (m.type === 'browseSessionFiles') {
+        const available = subfolders[originalProjectKey(s)] || [];
+        const child = card.projectOverride ? '' : effectiveSubfolder({ ...s, subfolder: card.subfolder }, available);
+        const cwd = await validateProjectFolder(s.cwd, true);
+        await browseFiles(await validateProjectFolder(path.join(cwd, child), true));
+        return;
+      }
+      if (m.type === 'open') {
+        await resumeCard(s, m); publish();
+      }
       if (m.type === 'update') {
         const p = m.patch || {};
         if (p.projectOverride === null) { delete card.projectOverride; delete card.subfolder; }
-        else if (typeof p.projectOverride === 'string' && projectCatalog(current.sessions, state.customProjects || [], state.projectNames).some(item => item.key === p.projectOverride)) {
+        else if (typeof p.projectOverride === 'string' && catalog().some(item => item.key === p.projectOverride)) {
           if (p.projectOverride === originalProjectKey(s)) delete card.projectOverride;
           else card.projectOverride = p.projectOverride;
           delete card.subfolder;
@@ -275,6 +461,7 @@ function activate(context) {
         await save(); publish();
       }
     } catch (e) {
+      if (m.type === 'handoff') post({type:'handoffError', key:m.key, requestId:m.requestId, text:e.message});
       post({ type: ['createProject', 'linkProjectFolder', 'pickProjectFolder'].includes(m.type) ? 'projectError' : 'notice', text: e.message });
       vscode.window.showErrorMessage(`Chat Atlas: ${e.message}`);
     }
@@ -296,17 +483,63 @@ function activate(context) {
       .replaceAll('{{iconUri}}', webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png')).toString());
     webview.onDidReceiveMessage(onMessage, null, context.subscriptions);
     webview.html = html;
-    timer = setInterval(() => { if (panel?.visible) void refresh(); }, Math.max(10, vscode.workspace.getConfiguration('chatAtlas').get('refreshSeconds', 20)) * 1000);
+    startMonitoring();
+    panel.onDidChangeViewState(e => { if (e.webviewPanel.visible) void refresh(); });
+    panel.onDidDispose(() => { panel = undefined; boardReady = false; if (!highlight()) stopMonitoring(); });
+  }
+  function startMonitoring() {
+    if (timer) return;
+    timer = setInterval(() => { if (monitoring()) void refresh(); }, Math.max(10, vscode.workspace.getConfiguration('chatAtlas').get('refreshSeconds', 20)) * 1000);
     activityTimer = setInterval(() => { void refreshActivity(); }, 2000);
     watchHistory();
-    panel.onDidChangeViewState(e => { if (e.webviewPanel.visible) void refresh(); });
-    panel.onDidDispose(() => { clearInterval(timer); clearInterval(activityTimer); closeHistoryWatchers(); panel = undefined; });
+  }
+  function stopMonitoring() {
+    clearInterval(timer); clearInterval(activityTimer); timer = undefined;
+    closeHistoryWatchers();
+  }
+  function updateHighlight() {
+    if (highlight()) { startMonitoring(); void refresh(); }
+    else { activity.update([]); if (!panel) stopMonitoring(); }
+  }
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('chatAtlas.theme')) sendTheme();
+    if (e.affectsConfiguration('chatAtlas.highlightActiveFiles')) updateHighlight();
+  }));
+  if (highlight()) updateHighlight();
+  context.subscriptions.push(vscode.window.registerUriHandler({
+    async handleUri(uri) {
+      if (uri.path !== '/new-project' || !/^[A-Za-z0-9_-]{1,22000}$/.test(uri.query)) return;
+      const folder = Buffer.from(uri.query, 'base64url').toString('utf8');
+      if (!path.isAbsolute(folder) || folder.length > 4096 || folder.includes('\0')) return;
+      pendingFolder = folder;
+      await open(); presentFolder();
+    }
+  }));
+  for (const enable of [true, false]) {
+    const command = enable ? 'chatAtlas.enableExplorerMenu' : 'chatAtlas.disableExplorerMenu';
+    context.subscriptions.push(vscode.commands.registerCommand(command, async () => {
+      try {
+        await configureExplorerMenu(context, vscode.env.uriScheme, enable);
+        vscode.window.showInformationMessage(enable ? 'Chat Atlas added to the Windows Explorer menu. On Windows 11, look under Show more options.' : 'Chat Atlas removed from the Windows Explorer menu.');
+      } catch (error) { vscode.window.showErrorMessage(`Chat Atlas: ${error.message}`); }
+    }));
   }
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
+  context.subscriptions.push(vscode.commands.registerCommand('chatAtlas.selectProject', async () => {
+    await refresh();
+    const choice = await vscode.window.showQuickPick(catalog()
+      .filter(item => !sidebarPreferences.hiddenProjects.includes(item.key))
+      .map(item => ({ label: item.name, description: item.cwd, key: item.key })), { title: 'Chat Atlas: Select Project' });
+    if (choice) {
+      await open();
+      pendingProject = choice.key;
+      presentProject();
+    }
+  }));
   status.text = '$(layout) Chat Atlas'; status.command = 'chatAtlas.open'; status.tooltip = 'Open your conversation board'; status.show();
-  context.subscriptions.push(status, vscode.commands.registerCommand('chatAtlas.open', () => open()), vscode.commands.registerCommand('chatAtlas.refresh', refresh),
+  context.subscriptions.push(status, vscode.commands.registerCommand('chatAtlas.findChatsForFile', findChatsForFile), vscode.commands.registerCommand('chatAtlas.openSettings', openSettings), vscode.commands.registerCommand('chatAtlas.open', () => open()), vscode.commands.registerCommand('chatAtlas.refresh', refresh),
     vscode.window.registerWebviewPanelSerializer('chatAtlas.board', { deserializeWebviewPanel: restored => open(restored) }),
-    { dispose() { disposed = true; clearInterval(timer); clearInterval(activityTimer); closeHistoryWatchers(); panel?.dispose(); } });
+    { dispose() { disposed = true; engineering.dispose(); clearInterval(timer); clearInterval(activityTimer); closeHistoryWatchers(); panel?.dispose(); } });
   return { refresh, getSnapshot: () => ({ ...current, sessions: visibleSessions(), topics: state.topics }) };
 }
 module.exports = { activate };

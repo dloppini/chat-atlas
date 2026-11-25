@@ -1,5 +1,6 @@
 'use strict';
-const { UUID } = require('./core');
+const path = require('node:path');
+const { UUID, claudeProjectPrompt } = require('./core');
 const { canonicalProjectPath } = require('../media/projects');
 const { codexBinary, createCodexProjectChat } = require('./codex-chat');
 const { openClaudeProjectTab } = require('./claude-tabs');
@@ -24,7 +25,7 @@ async function openNativeSession(vscode, session, editor = false) {
   const claude = session.provider === 'claude' && vscode.extensions.getExtension('anthropic.claude-code');
   if (claude) {
     if (session.cwd && !isProjectWorkspace(vscode, session.cwd)) {
-      await openClaudeProjectTab(vscode, claude, session.cwd, session.id, editor);
+      await openClaudeProjectTab(vscode, claude, session.cwd, session.id);
       return true;
     }
     await claude.activate();
@@ -38,31 +39,39 @@ async function openNativeSession(vscode, session, editor = false) {
   }
   return false;
 }
-async function newChatCommands(vscode, provider) {
-  const extension = vscode.extensions.getExtension(provider === 'codex' ? 'openai.chatgpt' : 'anthropic.claude-code');
-  const name = provider === 'codex' ? 'Codex' : 'Claude Code';
-  if (!extension) throw new Error(`Install the ${name} VS Code extension to start a chat in its UI.`);
+async function newClaudeChat(vscode, cwd) {
+  const extension = vscode.extensions.getExtension('anthropic.claude-code');
+  if (!extension) throw new Error('Install the Claude Code VS Code extension to start a chat in its UI.');
+  if (vscode.workspace.isTrusted === false) throw new Error('Trust this workspace before opening Claude.');
+  const first = vscode.workspace.workspaceFolders?.[0];
+  if (first && first.uri.scheme !== 'file') throw new Error('Open a local workspace to start a Claude project chat.');
+  const sameProject = isProjectWorkspace(vscode, cwd);
+  if (!sameProject && !path.isAbsolute(cwd)) throw new Error('Claude requires an absolute project folder.');
   await extension.activate();
-  const required = provider === 'codex' ? ['chatgpt.openSidebar', 'chatgpt.newChat'] : ['claude-vscode.sidebar.open', 'claude-vscode.newConversation'];
+  const sidebar = 'claude-vscode.sidebar.open';
+  const prompt = sameProject ? undefined : claudeProjectPrompt(cwd);
+  const [major, minor, patch] = (extension.packageJSON?.version || '').split('.').map(Number);
+  const directDraft = prompt && (major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 330))));
+  const next = prompt ? 'claude-vscode.editor.open' : 'claude-vscode.newConversation';
   const available = await vscode.commands.getCommands(true);
-  if (!required.every(command => available.includes(command))) throw new Error(`The ${name} new-chat UI is unavailable. Update its VS Code extension and try again.`);
-  return required;
-}
-async function startNativeChat(vscode, provider) {
-  for (const command of await newChatCommands(vscode, provider)) await vscode.commands.executeCommand(command);
+  if (!available.includes(sidebar) || (!directDraft && !available.includes(next))) throw new Error('The Claude Code new-chat UI is unavailable. Check the installed Claude Code extension.');
+  if (directDraft) return vscode.commands.executeCommand(sidebar, { prompt });
+  if (!prompt) {
+    await vscode.commands.executeCommand(sidebar);
+    return vscode.commands.executeCommand(next);
+  }
+  // Older sidebar.open commands save this preference in the background, racing editor.open.
+  const config = vscode.workspace.getConfiguration('claudeCode');
+  if (config.get('preferredLocation') !== 'sidebar') {
+    if (config.inspect('preferredLocation')?.workspaceValue === 'panel') throw new Error('Set Claude Code: Preferred Location to Sidebar in this workspace to open a project draft with this Claude version.');
+    await config.update('preferredLocation', 'sidebar', true);
+    if (vscode.workspace.getConfiguration('claudeCode').get('preferredLocation') !== 'sidebar') throw new Error('Claude Code could not use the sidebar preference in this workspace.');
+  }
+  return vscode.commands.executeCommand(next, undefined, prompt, undefined, undefined, false, { programmatic: 'honor-preferred-location' });
 }
 async function openNewProjectChat(vscode, provider, cwd, options = {}) {
   if (!['codex', 'claude'].includes(provider) || typeof cwd !== 'string' || !cwd) throw new Error('Invalid new-chat target.');
-  if (provider === 'claude') {
-    if (!isProjectWorkspace(vscode, cwd)) {
-      const extension = vscode.extensions.getExtension('anthropic.claude-code');
-      if (!extension) throw new Error('Install the Claude Code VS Code extension to start a chat in its UI.');
-      await openClaudeProjectTab(vscode, extension, cwd);
-      return;
-    }
-    await startNativeChat(vscode, provider);
-    return;
-  }
+  if (provider === 'claude') return newClaudeChat(vscode, cwd);
   const extension = vscode.extensions.getExtension('openai.chatgpt');
   if (!extension) throw new Error('Install the Codex VS Code extension to start a chat in its UI.');
   await extension.activate();

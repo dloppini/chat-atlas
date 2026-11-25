@@ -14,8 +14,9 @@ delete manifest.devDependencies;
 delete manifest.qna;
 delete manifest.galleryBanner;
 const runtimeFiles = [
+  'src/engineering.js', 'src/engineering-graph.js',
   'LICENSE.txt',
-  'src/git.js', 'src/extension.js', 'src/core.js', 'src/providers.js', 'src/codex-chat.js', 'src/claude-tabs.js',
+  'src/chat-files.js', 'src/explorer-menu.js', 'scripts/explorer-project.ps1', 'src/git.js', 'src/extension.js', 'src/core.js', 'src/providers.js', 'src/codex-chat.js', 'src/claude-tabs.js',
   'media/board.html', 'media/board.css', 'media/board.js', 'media/projects.js', 'media/icon.png',
 ];
 

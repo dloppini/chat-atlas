@@ -11,9 +11,17 @@ const scope = new AsyncLocalStorage();
 let queue = Promise.resolve();
 const verified = new Map();
 // shortcut: private Claude panel construction; replace with an official cwd argument when available.
-const supportedHash = 'cdc6cc5caf6a677dffe798c3805266a9e0612d0fe722b240a87bc9ce5e20060e';
+const supportedHashes = {
+  '2.1.323': 'cdc6cc5caf6a677dffe798c3805266a9e0612d0fe722b240a87bc9ce5e20060e',
+  '2.1.325': '1f94855dd66098c4ef63cc54b20f14fc08483c7a766249cb16500a3f5bbff12f',
+  '2.1.326': '0e3b4f5b76cc0ff00f99175410881f73cb146ecf37687807851d51141eb9f9c7',
+  '2.1.327': 'ad50c87a7f56bc35777d24051cf9316961dac6ea7a986eb2e6f01e635bc6e775',
+  '2.1.328': 'b8b324836541e5315a86fe0da5600404846819d08f32066d531c472f391bd653',
+  '2.1.329': '52b02f9e956efe2a696ba61d0b80cd7305aa7b929e7c5e0f4bb606bd4853ecec',
+  '2.1.330': 'd7d997a0dfd6634830268bb34f6292466f9a0d5a62e4c6f4d3302c3854c59089'
+};
 
-function openClaudeProjectTab(vscode, extension, cwd, sessionId, beside = false) {
+function openClaudeProjectTab(vscode, extension, cwd, sessionId) {
   const operation = queue.then(async () => {
     if (sessionId !== undefined && !UUID.test(sessionId)) throw new Error('Invalid session identifier.');
     if (vscode.workspace.isTrusted === false) throw new Error('Trust this workspace before opening Claude.');
@@ -25,8 +33,8 @@ function openClaudeProjectTab(vscode, extension, cwd, sessionId, beside = false)
     const source = await fs.promises.realpath(path.join(extension.extensionPath, 'extension.js'));
     if (!verified.has(source)) {
       const hash = createHash('sha256').update(await fs.promises.readFile(source)).digest('hex');
-      if (process.platform !== 'win32' || extension.packageJSON.version !== '2.1.323' || hash !== supportedHash) {
-        throw new Error('Cross-project Claude tabs need a compatibility update for this Claude build. The tested build is Windows 2.1.323. No chat or workspace was changed.');
+      if (process.platform !== 'win32' || hash !== supportedHashes[extension.packageJSON.version]) {
+        throw new Error(`Cross-project Claude tabs need a compatibility update for Claude ${extension.packageJSON.version}. Supported Windows builds: ${Object.keys(supportedHashes).join(', ')}. No chat or workspace was changed.`);
       }
       verified.set(source, true);
     }
@@ -48,11 +56,14 @@ function openClaudeProjectTab(vscode, extension, cwd, sessionId, beside = false)
       return original.call(fs, value, ...args);
     }
     Object.assign(bridge, original);
+    const groups = vscode.window.tabGroups;
+    const sideGroup = groups.all.find(group => group !== groups.activeTabGroup &&
+      group.tabs.some(tab => tab.input?.viewType === 'mainThreadWebview-claudeVSCodePanel'));
     fs.realpathSync = bridge;
     try {
       // An explicit column keeps panel construction synchronous; other sessions retain their own cwd.
       await scope.run(token, () => vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, undefined,
-        beside ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active, undefined, true));
+        sideGroup?.viewColumn ?? vscode.ViewColumn.Beside, undefined, true));
       if (!intercepted && sessionId === undefined) throw new Error('Claude did not create a project tab. Close the unused tab, if any, and try again.');
     } finally {
       if (fs.realpathSync === bridge) fs.realpathSync = original;

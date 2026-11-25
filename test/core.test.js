@@ -26,6 +26,12 @@ test('Search index includes older messages and text beyond the detail truncation
     assert.equal(published.messages, undefined);
   }
 });
+test('Search includes Codex event-only prompts and replies', () => {
+  const event = (type, message) => ({ type: 'event_msg', payload: { type, message } });
+  const records = [meta, prompt('Opening'), event('user_message', 'Opening'), event('user_message', 'Rare prompt'), event('agent_message', 'Rare reply')];
+  const session = parseSession('codex', id + '.jsonl', records, stat);
+  assert.equal(session.searchText, 'opening\nrare prompt\nrare reply');
+});
 test('Search reads the omitted middle of large transcripts, caches it and updates after append', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-search-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -290,6 +296,8 @@ test('Scanner tolerates incomplete lines, updates cached files, applies index ti
   r = await index.scan(opts); assert.equal(r.sessions[0].title, 'Initial task');
   await fs.writeFile(path.join(dir, 'session_index.jsonl'), JSON.stringify({ id, thread_name: '[$impeccable](skill://impeccable) Human title' }));
   r = await index.scan(opts); assert.equal(r.sessions[0].title, 'Human title');
+  await fs.writeFile(path.join(dir, 'session_index.jsonl'), JSON.stringify({ id, thread_name: '<external_codex_apps_selected_page_part_1_of_1>Companion Page snapshot part 1 of 1:' }));
+  r = await index.scan(opts); assert.equal(r.sessions[0].title, 'Initial task');
 });
 test('Bounded samples retain the start and end without interpreting partial records', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-sample-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -347,6 +355,34 @@ test('Codex pins the selected cwd even in the current project and Claude uses it
   assert.equal(storage.size, 0);
   await assert.rejects(openNewProjectChat(vscode, 'invalid', 'C:/Code/chat-atlas', context), /Invalid new-chat target/);
 });
+test('Claude cross-project sidebar drafts stay editable and file the submitted task while preserving resume cwd', async t => {
+  const { vscode, calls } = await newChatFixture(t);
+  const cwd = path.resolve('Project B'), host = 'C:/Code/chat-atlas';
+  let preference = 'panel', writes = 0;
+  vscode.workspace.getConfiguration = () => ({
+    get: () => preference, inspect: () => ({}),
+    update: async (_, value) => { await Promise.resolve(); preference = value; writes++; }
+  });
+  for (const version of ['2.1.325', '2.1.330']) {
+    calls.length = 0;
+    vscode.extensions.getExtension = () => ({ packageJSON: { version }, activate: async () => {} });
+    await openNewProjectChat(vscode, 'claude', cwd);
+    const draft = version === '2.1.330' ? calls[0][1].prompt : calls[0][2];
+    assert.ok(draft.includes(cwd) && draft.endsWith('\n\n'));
+    if (version === '2.1.330') assert.deepEqual(calls, [['claude-vscode.sidebar.open', { prompt: draft }]]);
+    else assert.deepEqual(calls, [['claude-vscode.editor.open', undefined, draft, undefined, undefined, false, { programmatic: 'honor-preferred-location' }]]);
+    assert.equal(writes, 1);
+    const session = parseSession('claude', id + '.jsonl', [{ type: 'user', cwd: host, sessionId: id, message: { content: draft + 'Check my brakes' } }], stat);
+    const state = reconcile([session], { customProjects: [{ id: 'b', name: 'Project B', cwd }] });
+    const [card] = publicSessions([session], state);
+    assert.equal(card.title, 'Check my brakes');
+    assert.equal(card.projectOverride, originalProjectKey({ cwd }));
+    assert.equal(card.cwd, host);
+    delete state.cards[session.key].projectOverride;
+    reconcile([session], state);
+    assert.equal(state.cards[session.key].projectOverride, undefined);
+  }
+});
 test('Missing provider extensions or UI commands fail without a terminal fallback', async t => {
   const { vscode, context, calls } = await newChatFixture(t);
   vscode.extensions.getExtension = () => undefined;
@@ -354,6 +390,12 @@ test('Missing provider extensions or UI commands fail without a terminal fallbac
   vscode.extensions.getExtension = () => ({ activate: async t => {} });
   vscode.commands.getCommands = async () => [];
   await assert.rejects(openNewProjectChat(vscode, 'claude', 'C:/Code/chat-atlas', context), /new-chat UI is unavailable/);
+  assert.deepEqual(calls, []);
+});
+test('An older Claude workspace explicitly configured for editor tabs gets an actionable sidebar error', async t => {
+  const { vscode, calls } = await newChatFixture(t);
+  vscode.workspace.getConfiguration = () => ({ get: () => 'panel', inspect: () => ({ workspaceValue: 'panel' }) });
+  await assert.rejects(openNewProjectChat(vscode, 'claude', path.resolve('Project B')), /Preferred Location to Sidebar/);
   assert.deepEqual(calls, []);
 });
 test('Codex creates a project chat in the background and opens its native sidebar in the same window', async t => {
@@ -387,4 +429,22 @@ test('Claude opens the primary project in a multi-root workspace without interru
   assert.equal(calls.length, 1);
   assert.equal(calls[0][6], undefined);
   assert.deepEqual(vscode.workspace.workspaceFolders, original);
+});
+
+
+test('Companion Page snapshots never supply titles, previews or conversation activity', () => {
+  const snapshot = part => `<external_codex_apps_selected_page_part_${part}_of_2>Companion Page snapshot part ${part} of 2: {"page_id":null,"document_view":null}</external_codex_apps_selected_page_part_${part}_of_2>`;
+  const records = [meta, prompt(snapshot(1)), prompt(snapshot(2)), prompt('Improve Git branch navigation'), answer('Updated the branch view.'), prompt(snapshot(1))];
+  for (const thread_name of [undefined, snapshot(1), snapshot(1).slice(0, 100), 'Companion Page snapshot part 1 of 2: {"page_id":null}']) {
+    const session = parseSession('codex', `${id}.jsonl`, records, stat, {thread_name});
+    assert.equal(session.title, 'Improve Git branch navigation');
+    assert.equal(session.preview, 'Updated the branch view.');
+    assert.deepEqual(session.messages.map(m => m.text), ['Improve Git branch navigation', 'Updated the branch view.']);
+    assert.ok(!session.searchText.includes('page_id'));
+    assert.equal(publicSessions([session], reconcile([session], {}), stat.mtimeMs)[0].running, false);
+  }
+  const mixed = parseSession('codex', `${id}.jsonl`, [meta, prompt(`${snapshot(1)} Fix the selected branch`)], stat);
+  assert.equal(mixed.title, 'Fix the selected branch');
+  const state = reconcile([mixed], {}); state.cards[mixed.key].title = 'My own title';
+  assert.equal(publicSessions([mixed], state)[0].title, 'My own title');
 });
