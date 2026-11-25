@@ -49,7 +49,8 @@ test('Engineering snapshots stay scoped to their project and Git worktree', asyn
   assert.match(clipboard[0], /Project: Project B/);
   assert.match(clipboard[0], /Branch \/ HEAD: review/);
   await engineering.handle({ type:'engineeringOpen', projectKey:'b', requestId:3, target:'extra.js' });
-  assert.deepEqual(opened, [{ file:path.join(b, 'extra.js'), line:1 }]);
+  // Files open by canonical path (macOS temp folders resolve /var to /private/var).
+  assert.deepEqual(opened, [{ file:await fs.realpath(path.join(b, 'extra.js')), line:1 }]);
   const restored = createEngineering(options);
   await restored.handle({ type:'engineeringRead', projectKey:'b', requestId:4 });
   assert.equal(messages.at(-1).state, 'Stale');
