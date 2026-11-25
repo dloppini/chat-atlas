@@ -187,7 +187,8 @@ test('Git dashboard rejects non-repositories', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-no-git-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.writeFile(path.join(root, '.git'), 'gitdir: missing-repository');
-  await assert.rejects(readGitDashboard(root), /not a git repository/);
+  // Git versions word this differently: older ones say "not a git repository", newer ones name the broken gitfile.
+  await assert.rejects(readGitDashboard(root), /not a git repository|does not point to a valid repository/);
 });
 
 test('Branch focus loads exact local and remote refs beyond the all-branch history limit', async t => {
