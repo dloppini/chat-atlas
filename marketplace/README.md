@@ -26,7 +26,7 @@ Analysis uses local Git and the TypeScript compiler shipped with compatible desk
 - Search and filter by project or provider. Keep separate folders distinct, including folders with matching project names.
 - Hide or restore project entries. Sort projects alphabetically or arrange them manually by dragging or Alt+Up/Down.
 - Move tasks between projects while keeping the current project selected and sidebar visibility unchanged.
-- Browse Timeline as a date-grouped list, or organize cards in Workflow and Topics. Resize the project sidebar on desktop; on narrow screens, open Projects from the workspace heading.
+- Browse Timeline as a date-grouped list, or organize cards in Workflow and Topics. Each card shows when it was last active; choose **Sort → Last updated** to put the most recently active chats first. Resize the project sidebar on desktop; on narrow screens, open Projects from the workspace heading.
 - Pin conversations, add notes, and mark tasks Done. Completion can be reversed.
 - Preview the latest message and reopen conversations through an installed provider extension or its command-line tool.
 - Browse for an existing project folder during creation or link it later. The project page shows its linked path and retains assigned conversations.

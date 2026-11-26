@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.53 - 26 November 2026
+## 0.1.53 - 27 November 2026
 
 - See when each conversation was last active: every card shows **Active 3h ago** (a date after 30 days), next to the created date outside Timeline.
 - Sort conversations by **Last updated** or **Newest first** from the new **Sort** menu beside **Show done**. With **Last updated**, Timeline groups chats by the day they were last active. Your choice is remembered.
@@ -9,11 +9,17 @@
 ## 0.1.52 - 26 November 2026
 
 - Start a new chat in the selected project with **Ctrl+N** (macOS: **Cmd+N**) while the board is focused. Change it with **Chat Atlas: Change New Chat Shortcut** or from the Chat Atlas settings.
+- Understand each **Where to start** step in Quality: every recommendation explains why it matters and how to fix it.
+- Skip `vendor` folders in Engineering analysis, like `node_modules` and build output.
 
 ## 0.1.51 - 25 November 2026
 
+Includes the changes from the 0.1.50 preview package.
+
 - Analyze MATLAB, Java, Kotlin, Scala, C#, Go, Rust, Swift, Dart, PHP, Ruby, Lua, R, Julia, shell and Objective-C projects in Engineering: complexity, complex functions, imports and by-name references (MATLAB path and package functions, same-folder classes), cycles and test reach, including tests matched by name such as FooTest.java or filtTest.m.
 - Let Claude Code, Codex and other MCP clients query Engineering evidence through a local, read-only MCP server: quality report, file impact and architecture map. Choose **Connect agents** in Engineering, or run **Chat Atlas: Register MCP Server with Agents**, to register it with the installed agents.
+- See each import cycle in Quality as its shortest loop, with the file and line where each file imports the next, and open the first import directly. The quality brief lists the same loop.
+- Open Engineering from its own icon button in the board header, beside the Conversations and Git switch.
 - Keep Git at the bottom of the board: **Keep at bottom** docks the Git view below your conversations as a compact, resizable pane that updates live as files and branches change. **Expand** returns to the full Git view.
 
 ## 0.1.49 - 25 November 2026
