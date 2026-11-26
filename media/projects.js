@@ -112,4 +112,14 @@ function moveProject(order, source, target, after = false) {
   next.splice(next.indexOf(target) + (after ? 1 : 0), 0, source);
   return next;
 }
-if (typeof module !== 'undefined') module.exports = { canonicalProjectPath, originalProjectKey, projectGroupKey, remapProjectKeys, linkProjectFolder, reconnectProjectFolder, projectCatalog, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject };
+// Compact "3h ago" label for card activity; older than 30 days falls back to a date.
+function activityAge(ms, now = Date.now()) {
+  const minutes = Math.max(0, Math.floor((now - ms) / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days < 30 ? `${days}d ago` : new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+if (typeof module !== 'undefined') module.exports = { activityAge, canonicalProjectPath, originalProjectKey, projectGroupKey, remapProjectKeys, linkProjectFolder, reconnectProjectFolder, projectCatalog, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject };

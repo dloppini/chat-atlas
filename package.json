@@ -2,7 +2,7 @@
   "name": "lpx-conversation-board",
   "displayName": "Chat Atlas by LPX",
   "description": "A local conversation organizer with project filters, topic boards, workflow status, and a timeline.",
-  "version": "0.1.49",
+  "version": "0.1.53",
   "publisher": "lpx",
   "author": {
     "name": "LPX"
@@ -79,6 +79,22 @@
         "enablement": "isWindows"
       },
       {
+        "command": "chatAtlas.registerMcp",
+        "title": "Chat Atlas: Register MCP Server with Agents"
+      },
+      {
+        "command": "chatAtlas.copyMcpSetup",
+        "title": "Chat Atlas: Copy MCP Server Setup"
+      },
+      {
+        "command": "chatAtlas.newChat",
+        "title": "Chat Atlas: New Chat in Selected Project"
+      },
+      {
+        "command": "chatAtlas.changeNewChatShortcut",
+        "title": "Chat Atlas: Change New Chat Shortcut"
+      },
+      {
         "command": "chatAtlas.refreshFiles",
         "title": "Chat Atlas: Refresh Files",
         "icon": "$(refresh)"
@@ -89,6 +105,12 @@
         "command": "chatAtlas.open",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a"
+      },
+      {
+        "command": "chatAtlas.newChat",
+        "key": "ctrl+n",
+        "mac": "cmd+n",
+        "when": "activeWebviewPanelId == 'chatAtlas.board'"
       }
     ],
     "configuration": {
@@ -156,7 +178,7 @@
           ],
           "default": "chatWindow",
           "scope": "application",
-          "description": "Where a Claude conversation opens when you select its title, and where new Claude chats and handoffs start."
+          "markdownDescription": "Where a Claude conversation opens when you select its title, and where new Claude chats and handoffs start.\n\nStart a new chat in the selected project with `Ctrl+N` (macOS: `Cmd+N`) while the board is focused. [Review or change the shortcut](command:chatAtlas.changeNewChatShortcut)."
         }
       }
     },
@@ -197,6 +219,10 @@
           "when": "chatAtlas.browsingFiles"
         },
         {
+          "command": "chatAtlas.newChat",
+          "when": "activeWebviewPanelId == 'chatAtlas.board'"
+        },
+        {
           "command": "chatAtlas.enableExplorerMenu",
           "when": "isWindows"
         },
@@ -209,7 +235,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/extension.js && node --check src/engineering.js && node --check src/engineering-graph.js && node --check src/git.js && node --check src/core.js && node --check src/claude-tabs.js && node --check src/providers.js && node --check src/codex-chat.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js && node --check scripts/package.js",
+    "check": "node --check src/extension.js && node --check src/engineering.js && node --check src/engineering-graph.js && node --check src/mcp.js && node --check src/git.js && node --check src/core.js && node --check src/claude-tabs.js && node --check src/providers.js && node --check src/codex-chat.js && node --check media/board.js && node --check media/projects.js && node --check scripts/preview.js && node --check scripts/package.js",
     "package": "node scripts/package.js",
     "preview": "node scripts/preview.js"
   },

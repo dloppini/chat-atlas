@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { classify, parseSession, reconcile, SessionIndex, sample, publicSessions } = require('../src/core');
 const { openNativeSession, openNewProjectChat } = require('../src/providers');
-const { canonicalProjectPath, originalProjectKey, projectGroupKey, projectCatalog, linkProjectFolder, remapProjectKeys, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject } = require('../media/projects');
+const { activityAge, canonicalProjectPath, originalProjectKey, projectGroupKey, projectCatalog, linkProjectFolder, remapProjectKeys, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject } = require('../media/projects');
 const id = '12345678-1234-1234-1234-123456789abc';
 const meta = { type: 'session_meta', payload: { id, cwd: 'C:/Code/example', timestamp: '2026-10-01T12:00:00Z' } };
 const prompt = text => ({ type: 'response_item', timestamp: '2026-10-01T12:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
@@ -447,4 +447,14 @@ test('Companion Page snapshots never supply titles, previews or conversation act
   assert.equal(mixed.title, 'Fix the selected branch');
   const state = reconcile([mixed], {}); state.cards[mixed.key].title = 'My own title';
   assert.equal(publicSessions([mixed], state)[0].title, 'My own title');
+});
+
+test('activityAge gives compact relative labels and falls back to a date after 30 days', () => {
+  const now = Date.UTC(2026, 10, 26, 12);
+  assert.equal(activityAge(now - 20e3, now), 'just now');
+  assert.equal(activityAge(now + 60e3, now), 'just now');
+  assert.equal(activityAge(now - 5 * 60e3, now), '5m ago');
+  assert.equal(activityAge(now - 3 * 3600e3, now), '3h ago');
+  assert.equal(activityAge(now - 2 * 86400e3, now), '2d ago');
+  assert.doesNotMatch(activityAge(now - 40 * 86400e3, now), /ago/);
 });

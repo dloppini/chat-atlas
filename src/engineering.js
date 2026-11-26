@@ -214,7 +214,7 @@ function qualityBrief(project, snapshot, insights) {
     '## Hotspots (complexity × commits in 180 days)', ...list(insights.hotspots, item =>
       `${item.file}: ${item.loc} lines, complexity ${item.complexity ?? 'n/a'}, ${item.churn} commits, ${item.importers} importers`),
     '', '## Complex functions', ...list(insights.functions.slice(0, 10), item => `${item.file}:${item.line} ${item.name}: ${item.lines} lines, complexity ${item.complexity}`),
-    '', '## Import cycles', ...list(insights.cycles, item => item.files.join(' ↔ ') + (item.size > item.files.length ? ` (+${item.size - item.files.length})` : '')),
+    '', '## Import cycles', ...list(insights.cycles, item => (item.loop ? item.loop.map(edge => `${edge.from}:${edge.line}`).join(' → ') + ` → ${item.loop[0].from}` : item.files.join(' ↔ ')) + (item.size > (item.loop || item.files).length ? ` (${item.size} files tangled)` : '')),
     '', `## Files without static importers (${insights.orphans.total})`, ...list(insights.orphans.files.slice(0, 20), file => file),
     '', `## Source not reached from tests (${insights.untested.total})`, ...list(insights.untested.files.slice(0, 20), file => file),
     '', '## Coverage', 'Static evidence only: complexity counts branches, test reach follows imports, and runtime loading (HTML, config, dynamic import) is not seen.'

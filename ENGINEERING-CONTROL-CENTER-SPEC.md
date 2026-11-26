@@ -19,6 +19,12 @@ Before changes, syntax checks passed and the Node suite reported 88 passed and o
 5. Open **Quality** for hotspots (complexity × commits in the last 180 days), complex functions, folder coupling (instability = efferent ÷ (afferent + efferent)), import cycles, files without static importers and source not reached from tests. **Where to start** ranks the next refactors; **Copy quality brief** puts them on the clipboard as Markdown for an agent.
 6. Open **Impact** and choose a trace depth, or start from **Analyze impact** in the Git diff inspector. Review affected folders and candidate tests. **Copy agent brief** puts a scoped Markdown report on the clipboard.
 7. Use **Changes** to review staged, unstaged, untracked and historical diffs in the existing Git inspector.
+8. Let an agent query the analysis directly: choose **Connect agents** in Engineering (or run **Chat Atlas: Register MCP Server with Agents**). It registers the server at user scope through the installed Claude Code and Codex CLIs, replacing an earlier registration. **Chat Atlas: Copy MCP Server Setup** copies the manual setup instead. Node must be on PATH. The server speaks MCP over stdio and offers three read-only tools, each taking an optional absolute `path` (default: the agent's working directory) and `refresh`:
+   - `quality_report`: hotspots, complex functions, cycles, folder coupling, files without importers and untested source, with Git identity and coverage notes.
+   - `file_impact`: imports, direct and transitive importers (`depth` 1–6), candidate tests and affected folders for one `file`.
+   - `architecture`: the layered dependency map of one `folder`.
+
+   The server runs its own scan with the same analyzer and limits, independent of board snapshots, and reuses it until Git state changes. Pass `refresh: true` after editing an already-modified file. The launcher in VS Code global storage is rewritten on activation, so extension and VS Code updates keep its compiler and extension paths current; start VS Code once after an update before the agent connects.
 
 ## Storage and rollback
 

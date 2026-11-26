@@ -45,10 +45,10 @@
       </div>
       <div class="header-actions">
         <div id="project-views" class="segments" role="group" aria-label="Project view" hidden>
-          <button id="engineering-switch" type="button" aria-pressed="false" aria-controls="engineering-panel">Engineering</button>
           <button id="conversation-switch" aria-keyshortcuts="Control+G" title="Return to conversations (Ctrl+G)" type="button" aria-controls="board" aria-pressed="true" aria-label="Conversations"><span class="full-label">Conversations</span><span class="short-label">Chats</span></button>
           <button id="git-switch" type="button" aria-pressed="false" aria-controls="git-dashboard" aria-label="Git" title="Show repository branches, commit graph and local changes"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8M18 9a9 9 0 0 1-9 9"/></svg> Git</button>
         </div>
+        <button id="engineering-switch" class="icon-button" type="button" aria-pressed="false" aria-controls="engineering-panel" aria-label="Engineering" title="Engineering: architecture, quality and impact" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5h18M6 10.5l1.4-5.2A1.5 1.5 0 0 1 9.2 4.2L12 5l2.8-.8a1.5 1.5 0 0 1 1.8 1.1l1.4 5.2"/><circle cx="7.5" cy="16" r="3"/><circle cx="16.5" cy="16" r="3"/><path d="M10.5 16a1.5 1.5 0 0 1 3 0"/></svg></button>
         <button id="new-chat" class="quiet" type="button" hidden>New chat</button>
         <div class="header-utilities">
           <button id="settings" class="icon-button" type="button" aria-label="Settings" title="Open Chat Atlas settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h7m5 0h4M4 17h2m5 0h9"/><circle cx="13.5" cy="7" r="2.5"/><circle cx="8.5" cy="17" r="2.5"/></svg></button>
@@ -66,7 +66,7 @@
     <div class="filterbar">
       <div class="provider-filters" role="group" aria-label="Provider filter"><button data-provider="all" class="active">All</button><button data-provider="codex">Codex</button><button data-provider="claude">Claude Code</button></div>
       <label class="done-filter"><input id="show-done" type="checkbox"> Show done <span id="done-count">0</span></label>
-      <span id="order-label">Newest first</span>
+      <label class="sort-filter">Sort <select id="card-sort" aria-label="Sort conversations"><option value="created">Newest first</option><option value="updated">Last updated</option></select></label>
     </div>
     <section id="focus-strip" class="focus-strip" aria-label="Pinned conversations" hidden></section>
     <div id="notice" class="notice" role="status" hidden></div>
@@ -83,6 +83,7 @@
         </div>
         <div class="engineering-actions">
           <button type="button" class="quiet" id="engineering-brief" hidden>Copy quality brief</button>
+          <button type="button" class="quiet" id="engineering-mcp" title="Register the Chat Atlas MCP server with Claude Code and Codex so agents can query this analysis">Connect agents</button>
           <button type="button" class="quiet" id="engineering-refresh">Refresh analysis</button>
           <button type="button" class="quiet" id="engineering-cancel" hidden>Cancel</button>
           <button type="button" class="quiet" id="engineering-clear" hidden>Clear snapshot</button>

@@ -1,4 +1,4 @@
-/* global acquireVsCodeApi, groupProjects, groupSubfolders, effectiveSubfolder, originalProjectKey, projectGroupKey, remapProjectKeys, resolveProjectSelection, orderedProjects, moveProject */
+/* global acquireVsCodeApi, activityAge, groupProjects, groupSubfolders, effectiveSubfolder, originalProjectKey, projectGroupKey, remapProjectKeys, resolveProjectSelection, orderedProjects, moveProject */
 'use strict';
 const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : window.atlasPreview;
 const saved = host.getState() || {};
@@ -7,12 +7,16 @@ let theme = ['system', 'pearl', 'dark'].includes(saved.theme) ? saved.theme : 's
 document.body.dataset.theme = theme;
 let data = { sessions: [], topics: [], sources: [], errors: [], projectCatalog: [], subfolders: {}, busy: true };
 let view = 'timeline', project = saved.project || '', provider = saved.provider || 'all', query = saved.query || '', showDone = saved.showDone || false, selected = saved.selected || '';
+let cardSort = saved.cardSort === 'updated' ? 'updated' : 'created';
+const sortTime = s => cardSort === 'updated' ? s.updatedAt || s.createdAt : s.createdAt;
 let subfolderFilter = typeof saved.subfolderFilter === 'string' ? saved.subfolderFilter : null;
 let gitOperation = null, gitOperationId = 0, gitOperationNotice = '';
 const gitCommitDrafts = new Map(Object.entries(saved.gitCommitDrafts || {}).filter(([,text]) => typeof text === 'string' && text.length <= 10000)), gitRemotes = new Map();
 let gitOperationFocus = '';
 let gitDiffId = 0, gitSelection = { mode: 'all' }, gitDiffResult = null;
 let gitAutoFit = saved.gitAutoFit !== false, gitHideHistory = saved.gitHideHistory === true, gitWrap = saved.gitWrap === true;
+let gitDiffScroll = { file: '', top: 0, left: 0, list: 0 };
+let gitDocked = saved.gitDocked === true, gitDockHeight = Number.isFinite(saved.gitDockHeight) ? saved.gitDockHeight : 320, gitLive = false, gitWatchKey = null, gitDockDrag = null;
 const gitHeights = { tree: 300, diff: 640 };
 for (const key of Object.keys(gitHeights)) if (Number.isFinite(saved.gitHeights?.[key])) gitHeights[key] = Math.max(160, Math.min(1200, saved.gitHeights[key]));
 const gitBranchFocus = saved.gitBranchFocus && typeof saved.gitBranchFocus === 'object' && !Array.isArray(saved.gitBranchFocus) ? saved.gitBranchFocus : {};
@@ -63,7 +67,7 @@ function showNotice(message) {
     window.scrollTo({ ...pageScroll, behavior: 'instant' });
   }, 15000);
 }
-const persist = () => host.setState({ engineeringOpen, engineeringView, engineeringPreferences: Object.fromEntries(engineeringPreferences), gitCommitDrafts:Object.fromEntries(gitCommitDrafts), gitAutoFit, gitHideHistory, gitWrap, themeMigrated, theme, gitBranchFocus, gitHeights, view, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
+const persist = () => host.setState({ engineeringOpen, engineeringView, engineeringPreferences: Object.fromEntries(engineeringPreferences), gitCommitDrafts:Object.fromEntries(gitCommitDrafts), gitAutoFit, gitHideHistory, gitWrap, gitDocked, gitDockHeight, themeMigrated, theme, gitBranchFocus, gitHeights, view, cardSort, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
 const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects, sidebarWidth, showSubfolders } }); };
 function sidebarBounds() { return { min: 180, max: Math.max(180, Math.min(520, window.innerWidth - 480)) }; }
 function applySidebarWidth() {
@@ -165,9 +169,10 @@ function reorderProject(source, target, after = false) {
   persistSidebar(); render();
   [...$('projects').children].find(row => row.dataset.project === source)?.querySelector('.nav')?.focus();
 }
-function requestGit(resetDiff = true) {
+function requestGit(resetDiff = true, live = false) {
   if (gitProject !== project) gitOperationNotice = '';
-  gitProject = project; gitResult = null;
+  gitProject = project; gitLive = live;
+  if (!live) gitResult = null;
   if (resetDiff) { gitDiffResult = null; gitDiffId++; gitSelection = { mode: 'all' }; }
   send({ type: 'gitDashboard', projectKey: project, focusRef: gitBranchFocus[project] || '', requestId: ++gitRequestId });
 }
@@ -219,17 +224,46 @@ function gitGraphLayout(commits) {
   }
   return { positions, byHash, maxLanes };
 }
-function renderGit() {
+function syncGitWatch(key) {
+  if (gitWatchKey !== key) { gitWatchKey = key; send({ type: 'gitWatch', projectKey: key }); }
+}
+function gitDockHandle() {
+  const handle = el('div', 'git-dock-resizer'); handle.tabIndex = 0; handle.title = 'Drag to resize · Arrow keys adjust';
+  handle.setAttribute('role', 'separator'); handle.setAttribute('aria-orientation', 'horizontal'); handle.setAttribute('aria-label', 'Resize Git panel');
+  handle.setAttribute('aria-valuemin', '160'); handle.setAttribute('aria-valuenow', String(gitDockHeight));
+  const resize = height => {
+    gitDockHeight = Math.round(Math.max(160, Math.min(height, window.innerHeight * .8)));
+    $('git-dashboard').style.setProperty('--git-dock-height', gitDockHeight + 'px'); handle.setAttribute('aria-valuenow', String(gitDockHeight));
+  };
+  handle.addEventListener('pointerdown', e => { if (e.button) return; e.preventDefault(); gitDockDrag = { y: e.clientY, height: $('git-dashboard').getBoundingClientRect().height }; handle.setPointerCapture(e.pointerId); });
+  handle.addEventListener('pointermove', e => { if (gitDockDrag) resize(gitDockDrag.height + gitDockDrag.y - e.clientY); });
+  handle.addEventListener('lostpointercapture', () => { gitDockDrag = null; persist(); });
+  handle.addEventListener('keydown', e => {
+    if (!['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault(); resize(gitDockHeight + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 64 : 16)); persist();
+  });
+  return handle;
+}
+function toggleGitDock() {
+  gitDocked = !gitDocked; persist();
+  if (gitDocked && gitOpen) selectProjectView(false); else render();
+  document.querySelector('.git-dock')?.focus({ preventScroll: true });
+}
+function renderGit(rebuild = true) {
   const active = gitOpen && !!project;
   const engineering = engineeringOpen && !!project;
+  const docked = gitDocked && !!project && !active;
   document.body.classList.toggle('git-mode', active);
+  document.body.classList.toggle('git-docked', docked);
   applyGitLayout();
   if (!active) document.querySelectorAll('#sources, .toolbar, .filterbar, #board, main > footer').forEach(node => { node.hidden = false; });
   $('project-views').hidden = !project;
   $('conversation-switch').setAttribute('aria-pressed', String(!active && !engineering));
   $('engineering-switch').setAttribute('aria-pressed', String(engineering));
+  $('engineering-switch').hidden = !project;
   $('git-switch').setAttribute('aria-pressed', String(active));
-  $('git-dashboard').hidden = !active;
+  $('git-dashboard').hidden = !active && !docked;
+  syncGitWatch(active || docked ? project : '');
   document.querySelectorAll('#sources, #focus-strip, .toolbar, .filterbar, #batch-actions, #board, main > footer').forEach(node => {
     if (active || engineering) node.hidden = true;
   });
@@ -244,13 +278,19 @@ function renderGit() {
       queryEngineering();
     }
   } else engineeringProject = '';
-  if (!active) return;
-  $('detail').hidden = true;
+  const section = $('git-dashboard'), layout = project + (active ? ':full' : ':dock');
+  if (!active && !docked) { delete section.dataset.layout; return; }
+  if (active) $('detail').hidden = true;
   if (gitProject !== project) requestGit();
+  // Conversation renders (search, filters, polling) must not rebuild the docked repository view.
+  else if (!rebuild && section.dataset.layout === layout) return;
+  section.dataset.layout = layout;
   const historyScroll = document.querySelector('.git-history-scroll');
   const messageSelection = document.activeElement?.id === 'git-commit-message' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   const scrollPosition = { top: historyScroll?.scrollTop || 0, left: historyScroll?.scrollLeft || 0 };
-  const section = $('git-dashboard'); section.replaceChildren();
+  section.replaceChildren();
+  section.style.setProperty('--git-dock-height', gitDockHeight + 'px');
+  if (docked) section.append(gitDockHandle());
   section.setAttribute('aria-busy', String(!gitResult));
   if (!gitResult || gitResult.error) {
     const message = el('p', 'notice', gitResult?.error || 'Reading repository...');
@@ -288,8 +328,12 @@ function renderGit() {
   repoHead.append(sync);
   const fit = button('Fit window', 'quiet git-fit', () => { gitAutoFit = !gitAutoFit; applyGitLayout(); persist(); });
   const focus = button('Hide history', 'quiet git-focus', () => { gitHideHistory = !gitHideHistory; applyGitLayout(); persist(); });
-  focus.setAttribute('aria-controls', 'git-history');
-  layoutActions.append(fit, focus); repoHead.append(layoutActions); section.append(repoHead);
+  const dock = button('Keep at bottom', 'quiet git-dock', toggleGitDock);
+  dock.title = 'Keep Git docked below conversations, updating live';
+  focus.setAttribute('aria-controls', 'git-history'); dock.setAttribute('aria-pressed', String(gitDocked));
+  if (docked) layoutActions.append(button('Expand', 'quiet', () => selectProjectView(true)));
+  else layoutActions.append(fit);
+  layoutActions.append(focus, dock); repoHead.append(layoutActions); section.append(repoHead);
   for (const key of Object.keys(gitHeights)) section.style.setProperty('--git-' + key + '-height', gitHeights[key] + 'px');
   const position = el('div', 'git-position');
   const current = el('strong', 'git-checkout', repo.head ? `Checked out: ${repo.branch} @ ${repo.head.slice(0,7)}` : `${repo.branch} | No commits yet`);
@@ -297,8 +341,9 @@ function renderGit() {
   position.append(el('span', '', repo.upstream ? `${repo.upstream} | ${repo.tracking ? `${repo.tracking[0]} ahead / ${repo.tracking[1]} behind` : 'tracking ref unavailable'} | last fetched state` : repo.branch === 'Detached HEAD' ? 'Detached: new commits are not on a branch' : 'No upstream configured'));
   if (repo.focusRef) position.append(el('span', '', `Viewing ${repo.focusRef.replace(/^refs\/(heads|remotes)\//, '')}${repo.comparison ? ` | ${repo.comparison[0]} commits only on HEAD / ${repo.comparison[1]} only on this branch` : ''}`));
   if (repo.head && !(repo.commits || []).some(c => c.hash === repo.head)) position.append(button('Show current branch', 'quiet', () => { gitHideHistory = false; focusGitBranch(repo.branch === 'Detached HEAD' ? '' : 'refs/heads/' + repo.branch); }));
-  if (repo.changes.length && repo.upstream) position.append(el('span', '', 'Pull requires a clean working tree'));
-  section.append(position);
+  // Docked: the Pull button's tooltip carries this reason, and the status shares the heading row to leave room for the tree.
+  if (repo.changes.length && repo.upstream && !docked) position.append(el('span', '', 'Pull requires a clean working tree'));
+  if (docked) repoHead.insertBefore(position, sync); else section.append(position);
   if (gitOperation || gitOperationNotice) { const notice = el('div', 'git-operation-status', gitOperation ? `Running ${gitOperation.action}...` : gitOperationNotice); notice.setAttribute('role','status'); section.append(notice); }
   const history = el('section', 'git-history'); history.id = 'git-history';
   const toolbar = el('div', 'git-heading');
@@ -529,7 +574,7 @@ function meter(value, max, className = '') {
 function renderEngineeringQuality(content, summary) {
   const q = summary.insights;
   if (!q) { content.append(el('p', '', 'Refresh analysis to compute quality insights for this snapshot.')); return; }
-  if (!engineeringEvidence(summary)) content.append(el('p', 'eng-caption', 'No supported source files: complexity, cycles and test reach cover JS/TS, Python and C/C++/Arduino. Line counts and commit history are shown.'));
+  if (!engineeringEvidence(summary)) content.append(el('p', 'eng-caption', `No supported source files: complexity, cycles and test reach cover ${engineeringLanguages}. Line counts and commit history are shown.`));
   if (summary.generated) content.append(el('p', 'eng-caption', `${summary.generated} large generated data files (images, fonts, sounds) are listed but excluded from these figures.`));
   const untestedHot = q.hotspots.filter(item => q.untested.files.includes(item.file));
   const stats = el('dl', 'eng-stats');
@@ -545,19 +590,36 @@ function renderEngineeringQuality(content, summary) {
   content.append(stats);
 
   const steps = [];
-  for (const cycle of q.cycles.slice(0, 2)) steps.push(['bad', `Break the import cycle across ${cycle.size} files`, cycle.files.slice(0, 4).join(' → ') + (cycle.size > 4 ? ' …' : '') + '. Move the shared part into a module both sides import.', () => inspectEngineeringFile(cycle.files[0]), 'Inspect']);
-  for (const item of untestedHot.slice(0, 2)) steps.push(['warn', `Add tests around ${item.file}`, `A hotspot with no test reaching it: ${item.loc} lines, complexity ${item.complexity ?? 'n/a'}, ${item.churn} recent commits.`, () => inspectEngineeringFile(item.file), 'Inspect']);
-  for (const fn of q.functions.filter(fn => fn.complexity >= 25).slice(0, 2)) steps.push(['warn', `Split ${fn.name}`, `${fn.file}:${fn.line} · ${fn.lines} lines with ${fn.complexity} branches. Extract the independent cases into named helpers.`, () => requestEngineering('engineeringOpen', { target: fn.file, line: fn.line }), 'Open']);
-  for (const item of q.hotspots.filter(item => !untestedHot.includes(item)).slice(0, 1)) steps.push(['warn', `Reduce change risk in ${item.file}`, `Most complex code that also changes often (${item.churn} commits in 180 days). Changes here carry the most regression risk.`, () => inspectEngineeringFile(item.file), 'Inspect']);
-  if (q.orphans.total) steps.push(['info', `Review ${q.orphans.total} files with no static importer`, 'Confirm each is loaded at runtime (HTML, config, dynamic import) or delete it.', () => { const details = $('eng-orphans'); details.open = true; details.scrollIntoView({ block: 'nearest' }); }, 'Show']);
+  for (const cycle of q.cycles.slice(0, 2)) {
+    const loop = cycle.loop;
+    if (!loop) { steps.push(['bad', `Break the import cycle across ${cycle.size} files`, cycle.files.slice(0, 4).join(', ') + (cycle.size > 4 ? ' …' : '') + '. Refresh analysis to see the import order and lines.', () => inspectEngineeringFile(cycle.files[0]), 'Inspect']); continue; }
+    // Show the shared folder once so the chain reads as file names.
+    let dir = loop[0].from.slice(0, loop[0].from.lastIndexOf('/') + 1);
+    while (dir && !loop.every(edge => edge.from.startsWith(dir))) dir = dir.slice(0, dir.lastIndexOf('/', dir.length - 2) + 1);
+    const name = file => file.slice(dir.length);
+    const hops = loop.slice(0, 6).map(edge => `${name(edge.from)}:${edge.line}`).join(' → ') + (loop.length > 6 ? ' → …' : '') + ` → back to ${name(loop[0].from)}`;
+    steps.push(['bad', loop.length === 1 ? `${loop[0].from} imports itself` : `Import cycle: ${loop.length} files load each other`,
+      `${dir ? `In ${dir}: ` : ''}${hops}. Each file:line is where that file imports the next.${cycle.size > loop.length ? ` ${cycle.size} files are tangled in total; this is the shortest loop.` : ''}`,
+      () => requestEngineering('engineeringOpen', { target: loop[0].from, line: loop[0].line }), 'Open',
+      'Why it matters: whichever file loads first sees the others half-initialised, so imports can be undefined or throw “Cannot access before initialization”, and the outcome changes with load order. None of them can be tested, reused or code-split alone. Fix: cut the least-needed import by moving what both sides use into a new module, or make it type-only or a lazy import().']);
+  }
+  for (const item of untestedHot.slice(0, 2)) steps.push(['warn', `Add tests around ${item.file}`, `A hotspot with no test reaching it: ${item.loc} lines, complexity ${item.complexity ?? 'n/a'}, ${item.churn} recent commits.`, () => inspectEngineeringFile(item.file), 'Inspect',
+    'Why it matters: it changes often and nothing catches a regression; start with tests for the paths that changed most recently.']);
+  for (const fn of q.functions.filter(fn => fn.complexity >= 25).slice(0, 2)) steps.push(['warn', `Split ${fn.name}`, `${fn.file}:${fn.line} · ${fn.lines} lines with ${fn.complexity} branches.`, () => requestEngineering('engineeringOpen', { target: fn.file, line: fn.line }), 'Open',
+    'Why it matters: every branch is a path to test, and bugs hide in combinations nobody runs; in a component it also re-renders as one unit. Fix: extract the independent cases into named helpers or child components.']);
+  for (const item of q.hotspots.filter(item => !untestedHot.includes(item)).slice(0, 1)) steps.push(['warn', `Reduce change risk in ${item.file}`, `Among the most complex code and changed often (${item.churn} commits in 180 days).`, () => inspectEngineeringFile(item.file), 'Inspect',
+    'Why it matters: each change touches code that is hard to reason about, so this is where regressions most likely come from. Fix: split it along the parts that change together, and cover them with tests first.']);
+  if (q.orphans.total) steps.push(['info', `Review ${q.orphans.total} files with no static importer`, 'Nothing imports them, so they are dead code unless loaded at runtime (HTML, config, framework routes, dynamic import).', () => { const details = $('eng-orphans'); details.open = true; details.scrollIntoView({ block: 'nearest' }); }, 'Show',
+    'Why it matters: dead files still get reviewed, updated and searched, and mislead readers about what runs. Fix: confirm the runtime loader or delete them.']);
   if (summary.unresolved) steps.push(['info', `Check ${summary.unresolved} unresolved imports`, 'Packages and runtime paths stay unresolved; local ones may point to missing files.', () => switchEngineering('architecture'), 'Architecture']);
   content.append(el('h2', '', 'Where to start'));
   if (!steps.length) content.append(el('p', '', 'No cycles, hotspots or untested complex code found in this snapshot.'));
   else {
     const list = el('ol', 'eng-steps');
-    for (const [tone, title, detail, action, actionLabel] of steps.slice(0, 6)) {
+    for (const [tone, title, detail, action, actionLabel, why] of steps.slice(0, 6)) {
       const item = el('li', 'eng-step ' + tone), text = el('div');
       text.append(el('strong', '', title), el('p', '', detail));
+      if (why) text.append(el('p', '', why));
       item.append(text, button(actionLabel, 'quiet', action, `${actionLabel}: ${title}`));
       list.append(item);
     }
@@ -613,12 +675,13 @@ function renderEngineeringQuality(content, summary) {
 function engineeringFileButton(file) {
   return button(file, 'quiet engineering-file', () => inspectEngineeringFile(file), 'Inspect ' + file + ' on the Architecture view');
 }
+const engineeringLanguages = 'JS/TS, Python, C/C++, Java, Kotlin, C#, Go, Rust, Swift, PHP, Ruby, MATLAB and other common languages';
 const engineeringEvidence = summary => !!(summary.engine && summary.sourceFiles) || !!summary.languages?.length;
 function unanalyzedReason(file) {
   if (/\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ino)$/i.test(file)) return 'Large generated data (over 128 KB, such as an image, font or sound array): listed but not analyzed.';
   if (/\.[cm]?[jt]sx?$/i.test(file)) return 'JS and TS analysis needs the TypeScript compiler bundled with VS Code, which this snapshot could not load.';
   const ext = /\.([^./]+)$/.exec(file)?.[1];
-  return `${ext ? '.' + ext + ' files are' : 'This file is'} not analyzed. Dependencies and quality cover JS/TS, Python and C/C++/Arduino.`;
+  return `${ext ? '.' + ext + ' files are' : 'This file is'} not analyzed. Dependencies and quality cover ${engineeringLanguages}.`;
 }
 function renderEngineeringGraph(content, graph, indexed) {
   const evidence = engineeringEvidence(indexed);
@@ -640,7 +703,7 @@ function renderEngineeringGraph(content, graph, indexed) {
     toolbar.append(el('h2', 'engineering-path', engineeringView === 'architecture' ? 'Dependency neighborhood' : selected), actions);
     content.append(toolbar);
     if (!evidence) {
-      content.append(el('p', 'eng-notice', indexed.sourceFiles ? unanalyzedReason('.js') : 'No supported source files in this snapshot. Dependencies and quality cover JS/TS, Python and C/C++/Arduino.'));
+      content.append(el('p', 'eng-notice', indexed.sourceFiles ? unanalyzedReason('.js') : `No supported source files in this snapshot. Dependencies and quality cover ${engineeringLanguages}.`));
     } else if (!graph.metrics && indexed.languages) {
       content.append(el('p', 'eng-notice', unanalyzedReason(selected)));
     } else {
@@ -712,6 +775,7 @@ function renderEngineering() {
   for (const tab of document.querySelectorAll('[data-engineering-view]')) tab.setAttribute('aria-pressed', String(tab.dataset.engineeringView === engineeringView));
   const useGraph = ['architecture', 'impact'].includes(engineeringView) && !!snapshot?.graph;
   $('engineering-brief').hidden = engineeringView !== 'quality' || !snapshot?.graph?.insights;
+  $('engineering-mcp').hidden = result?.state === 'Unsupported';
   const filters = engineeringFilters();
   $('engineering-filters').hidden = !useGraph;
   $('engineering-depth-label').hidden = engineeringView !== 'impact';
@@ -875,6 +939,11 @@ function renderGitDiff() {
   const stats = el('span', 'git-diff-stats'); stats.setAttribute('aria-label', `${additions} added lines, ${deletions} deleted lines in preview`);
   stats.append(el('span', 'git-added-count', '+' + additions), el('span', 'git-removed-count', '-' + deletions)); fileHead.append(stats);
   content.append(patch); pane.append(files,content); inspector.append(pane);
+  // Live refreshes rebuild this pane; keep the reader's place in the same file.
+  if (gitDiffScroll.file === diff.file) { content.scrollTop = gitDiffScroll.top; content.scrollLeft = gitDiffScroll.left; files.scrollTop = gitDiffScroll.list; }
+  else gitDiffScroll = { file: diff.file, top: 0, left: 0, list: 0 };
+  content.addEventListener('scroll', () => { gitDiffScroll.top = content.scrollTop; gitDiffScroll.left = content.scrollLeft; }, { passive: true });
+  files.addEventListener('scroll', () => { gitDiffScroll.list = files.scrollTop; }, { passive: true });
   const focusFile = focused?.dataset.diffFile || (focused?.dataset.diffMode === gitSelection.mode && gitSelection.file);
   const nextFocus = focusFile ? [...files.querySelectorAll('button')].find(item => item.dataset.diffFile === focusFile)
     : focused && !focused.dataset.diffMode && [...inspector.querySelectorAll('button')].find(item => item.textContent === focused.textContent);
@@ -922,7 +991,7 @@ function setCardRunning(c, running) {
   indicator.setAttribute('role', 'img'); indicator.setAttribute('aria-label', 'Running');
   indicator.title = 'Unfinished task detected from local conversation activity';
   const meta = c.querySelector('.card-meta');
-  meta.insertBefore(indicator, meta.querySelector('time'));
+  meta.insertBefore(indicator, meta.querySelector('.card-times'));
 }
 function syncProjectRunning() {
   const counts = new Map();
@@ -950,8 +1019,10 @@ function card(s) {
   pick.addEventListener('change', () => { if (pick.checked) batchSelection.add(s.key); else batchSelection.delete(s.key); render(); });
   c.classList.toggle('batch-selected', batchSelection.has(s.key));
   meta.append(el('span', `provider-icon ${s.provider}`, s.provider === 'codex' ? 'C' : '✳'), el('span', '', providerName(s.provider)));
-  const time = el('time', '', shortDate(s.createdAt)); time.dateTime = new Date(s.createdAt).toISOString();
-  meta.title = `Created ${fullDate(s.createdAt)} · Last activity ${fullDate(s.updatedAt)}`; meta.append(time);
+  const time = el('time', 'card-created', shortDate(s.createdAt)); time.dateTime = new Date(s.createdAt).toISOString();
+  const updatedAt = s.updatedAt || s.createdAt, updated = el('time', 'card-updated', `Active ${activityAge(updatedAt)}`); updated.dateTime = new Date(updatedAt).toISOString();
+  const times = el('span', 'card-times'); times.append(time, updated);
+  meta.title = `Created ${fullDate(s.createdAt)} · Last activity ${fullDate(updatedAt)}`; meta.append(times);
   const title = button(s.title, 'card-open', () => select(s, true), `Resume ${s.title}`); title.dataset.action = 'open';
   const body = el('div', 'card-body');
   body.append(title);
@@ -1088,13 +1159,14 @@ function render(pageScroll = captureScrollPosition()) {
   document.querySelectorAll('[data-view]').forEach(b => { b.classList.toggle('active', b.dataset.view === view); b.setAttribute('aria-pressed', String(b.dataset.view === view)); });
   document.querySelectorAll('[data-provider]').forEach(b => { b.classList.toggle('active', b.dataset.provider === provider); b.setAttribute('aria-pressed', String(b.dataset.provider === provider)); });
   $('show-done').checked = showDone;
+  $('card-sort').value = cardSort;
   const pins = scoped.filter(s => s.pinned && (showDone || s.status !== 'Done')).sort((a, b) => a.createdAt - b.createdAt);
   $('focus-strip').hidden = pins.length === 0;
   $('focus-strip').replaceChildren(el('span', '', 'Pinned'), ...pins.map(s => button(s.title, `focus-item${s.key === selected ? ' selected' : ''}`, () => select(s, true), `Resume ${s.title}`)));
   $('errors').textContent = data.errors.join(' ');
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const visible = scoped.filter(s => (provider === 'all' || s.provider === provider) && (showDone || s.status !== 'Done') && words.every(word => (s.searchText || '').includes(word) || `${s.title} ${s.preview} ${s.project} ${effectiveSubfolder(s, data.subfolders?.[projectGroupKey(s)] || [])} ${s.note} ${data.topics.find(t => t.id === s.topic)?.name || ''}`.toLowerCase().includes(word))).sort((a, b) => b.createdAt - a.createdAt || a.key.localeCompare(b.key));
-  const groups = view === 'topics' ? data.topics.map(t => ({ id: t.id, name: t.name, sessions: visible.filter(s => s.topic === t.id) })) : view === 'workflow' ? ['Inbox', 'In progress', 'Waiting', 'Done'].map(status => ({ id: status, name: status, sessions: visible.filter(s => s.status === status) })) : [...new Set(visible.map(s => new Date(s.createdAt).toLocaleDateString()))].map(day => ({ id: day, name: day, sessions: visible.filter(s => new Date(s.createdAt).toLocaleDateString() === day) }));
+  const visible = scoped.filter(s => (provider === 'all' || s.provider === provider) && (showDone || s.status !== 'Done') && words.every(word => (s.searchText || '').includes(word) || `${s.title} ${s.preview} ${s.project} ${effectiveSubfolder(s, data.subfolders?.[projectGroupKey(s)] || [])} ${s.note} ${data.topics.find(t => t.id === s.topic)?.name || ''}`.toLowerCase().includes(word))).sort((a, b) => sortTime(b) - sortTime(a) || a.key.localeCompare(b.key));
+  const groups = view === 'topics' ? data.topics.map(t => ({ id: t.id, name: t.name, sessions: visible.filter(s => s.topic === t.id) })) : view === 'workflow' ? ['Inbox', 'In progress', 'Waiting', 'Done'].map(status => ({ id: status, name: status, sessions: visible.filter(s => s.status === status) })) : [...new Set(visible.map(s => new Date(sortTime(s)).toLocaleDateString()))].map(day => ({ id: day, name: day, sessions: visible.filter(s => new Date(sortTime(s)).toLocaleDateString() === day) }));
   if (focusedGroup && !data.busy && !groups.some(g => g.id === focusedGroup)) { focusedGroup = ''; persist(); }
   const shownGroups = focusedGroup ? groups.filter(g => g.id === focusedGroup) : groups;
   const selectable = new Set(shownGroups.flatMap(g => g.sessions.map(s => s.key)));
@@ -1128,7 +1200,7 @@ function render(pageScroll = captureScrollPosition()) {
     pickAll.title = `${pickAll.checked ? 'Deselect' : 'Select'} all in ${group.name}`;
     pickAll.setAttribute('aria-label', pickAll.title);
     pickAll.addEventListener('change', () => { for (const s of group.sessions) { if (pickAll.checked) batchSelection.add(s.key); else batchSelection.delete(s.key); } render(); [...board.querySelectorAll('.section-select')].find(n => n.dataset.groupSelect === group.id)?.focus({ preventScroll: true }); });
-    const groupTitle = view === 'timeline' ? dayHeading.format(group.sessions[0].createdAt) : group.name;
+    const groupTitle = view === 'timeline' ? dayHeading.format(sortTime(group.sessions[0])) : group.name;
     head.append(pickAll, el('span', 'topic-dot'), el('h2', '', groupTitle), el('span', 'count', String(group.sessions.length)), focus); column.append(head);
     const list = el('div', 'column-cards'); list.append(...group.sessions.map(card));
     if (!group.sessions.length) list.append(el('div', 'empty-column', view === 'workflow' && group.id === 'Done' && !showDone ? 'Tick “Show done” to see finished chats.' : focusedGroup ? 'No conversations match the current filters in this group.' : 'Drop a conversation here'));
@@ -1147,7 +1219,7 @@ function render(pageScroll = captureScrollPosition()) {
   }
   if (focusColumn) [...board.querySelectorAll('.column')].find(c => c.dataset.group === focusColumn)?.querySelector('.column-focus')?.focus({ preventScroll: true });
   // Keep the viewport steady after layout changes and browser scroll anchoring.
-  renderGit();
+  renderGit(false);
   restoreScrollPosition(pageScroll);
 }
 let handoffRequest = 0;
@@ -1302,9 +1374,22 @@ window.addEventListener('message', e => {
       requestGit(false); renderGit();
     } else renderGit();
   }
-  if (m.type === 'gitDiff' && m.projectKey === project && m.requestId === gitDiffId) { gitDiffResult = m; renderGitDiff(); }
+  if (m.type === 'gitChanged' && m.projectKey === project && m.projectKey === gitWatchKey && !gitOperation && !gitDockDrag) requestGit(false, true);
+  if (m.type === 'gitDiff' && m.projectKey === project && m.requestId === gitDiffId) {
+    const same = gitDiffResult && JSON.stringify(gitDiffResult.diff) === JSON.stringify(m.diff) && gitDiffResult.error === m.error;
+    gitDiffResult = m; if (!same) renderGitDiff();
+  }
   if (m.type === 'gitDashboard' && m.projectKey === project && m.requestId === gitRequestId) {
-    gitResult = m; renderGit(); if (!m.error && !gitDiffResult) selectGitDiff(gitSelection);
+    const live = gitLive; gitLive = false;
+    // Live refreshes only touch the DOM when the repository actually changed.
+    if (live && gitResult && JSON.stringify(gitResult.dashboard) === JSON.stringify(m.dashboard) && gitResult.error === m.error) return;
+    gitResult = m; renderGit();
+    if (live && !m.error && gitDiffResult && gitSelection.mode !== 'commit') {
+      // A file that was committed or reverted meanwhile falls back to the first remaining change.
+      if (gitSelection.file && !m.dashboard.changes.some(change => change.file === gitSelection.file)) { const { file, ...rest } = gitSelection; gitSelection = rest; }
+      send({ type: 'gitDiff', projectKey: project, requestId: ++gitDiffId, ...gitSelection });
+    }
+    else if (!m.error && !gitDiffResult) selectGitDiff(gitSelection);
     if (!m.error && gitFocusPending) $('git-branch-focus')?.focus({preventScroll:true}); gitFocusPending = false;
     if (gitOperationFocus) { ($(gitOperationFocus) || [...document.querySelectorAll('.git-sync-actions button')].find(n => n.textContent === gitOperationFocus))?.focus({preventScroll:true}); gitOperationFocus = ''; }
   }
@@ -1371,11 +1456,20 @@ window.addEventListener('message', e => {
     } else showNotice(m.text);
   }
   if (m.type === 'notice') showNotice(m.text);
+  if (m.type === 'newChatShortcut' && !document.querySelector('dialog[open]')) {
+    if (project) openNewChatDialog(project); else showNotice('Select a project to start a new chat.');
+  }
+  if (m.type === 'mcpRegistered') {
+    const button = $('engineering-mcp');
+    button.disabled = false; button.removeAttribute('aria-busy'); button.textContent = 'Connect agents';
+    showNotice(m.text);
+  }
   if (m.type === 'projectPicked' && data.projectCatalog.some(item => item.key === m.key)) chooseProject(m.key);
 });
 $('search').value = query;
 $('search').addEventListener('input', e => { query = e.target.value; persist(); render(); });
 $('show-done').addEventListener('change', e => { showDone = e.target.checked; persist(); render(); });
+$('card-sort').addEventListener('change', e => { cardSort = e.target.value === 'updated' ? 'updated' : 'created'; persist(); render(); });
 $('all-projects').addEventListener('click', () => chooseProject(''));
 $('refresh').addEventListener('click', () => {
   if (gitOpen && project) { requestGit(); renderGit(); }
@@ -1394,6 +1488,7 @@ function selectProjectView(showGit) {
 $('git-switch').addEventListener('click', () => selectProjectView(true));
 $('conversation-switch').addEventListener('click', () => selectProjectView(false));
 $('engineering-switch').addEventListener('click', () => {
+  if (engineeringOpen) { selectProjectView(false); return; }
   engineeringOpen = true;
   gitOpen = false;
   persist();
@@ -1405,6 +1500,10 @@ $('engineering-search').addEventListener('input', e => updateEngineering({ query
 $('engineering-module').addEventListener('change', e => updateEngineering({ module: e.target.value, offset: 0 }));
 $('engineering-depth').addEventListener('change', e => updateEngineering({ depth: Number(e.target.value) }));
 $('engineering-brief').addEventListener('click', () => requestEngineering('engineeringCopy', { brief: 'quality' }));
+$('engineering-mcp').addEventListener('click', e => {
+  e.currentTarget.disabled = true; e.currentTarget.setAttribute('aria-busy', 'true'); e.currentTarget.textContent = 'Connecting…';
+  send({ type: 'registerMcp' });
+});
 for (const [action, type] of [['refresh', 'engineeringRefresh'], ['cancel', 'engineeringCancel'], ['clear', 'engineeringClear']]) {
   $('engineering-' + action).addEventListener('click', () => requestEngineering(type));
 }

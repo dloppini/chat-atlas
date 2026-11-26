@@ -58,13 +58,17 @@ function azureRepositoryUrl(remote) {
 }
 async function readGitDashboard(cwd, focusRef = '') {
   const root = (await run(cwd, ['rev-parse', '--show-toplevel'])).trim();
-  const [branch, branches, status, refs, head, remotes] = await Promise.all([
+  // Each Git spawn costs ~100 ms on Windows, so independent reads share one parallel round.
+  const [branch, branches, status, refs, head, remoteList, trackingCount, version] = await Promise.all([
     run(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => 'Detached HEAD'),
     run(root, ['branch', '--all', '--no-color']),
     run(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
     run(root, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)', 'refs/heads', 'refs/remotes']),
     run(root, ['rev-parse', '--verify', 'HEAD']).then(s => s.trim()).catch(() => ''),
-    run(root, ['remote']).then(s => s.trim().split('\n').filter(Boolean))
+    // Same push URLs as `remote get-url --push --all` (pushInsteadOf applied), for every remote in one call.
+    run(root, ['remote', '-v']),
+    run(root, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).then(s => s.trim().split(/\s+/).map(Number)).catch(() => null),
+    indexVersion(root)
   ]);
   const branchRefs = refs.trim().split('\n').filter(Boolean).map(line => {
     const [ref, hash, upstream, remote, remoteRef] = line.split('\0');
@@ -72,25 +76,29 @@ async function readGitDashboard(cwd, focusRef = '') {
   });
   if (typeof focusRef !== 'string' || (focusRef && !branchRefs.some(branch => branch.ref === focusRef))) throw new Error('This branch is no longer available. Show all branches or refresh.');
   const current = branchRefs.find(ref => ref.ref === 'refs/heads/' + branch.trim());
-  const azureRemotes = (await Promise.all(remotes.map(async name => {
-    const urls = (await run(root, ['remote', 'get-url', '--push', '--all', name])).trim().split('\n');
+  const remoteLines = remoteList.split('\n').filter(Boolean);
+  const remotes = [...new Set(remoteLines.map(line => line.split('\t')[0]))];
+  const azureRemotes = remotes.map(name => {
+    const urls = remoteLines.filter(line => line.startsWith(name + '\t') && line.endsWith(' (push)')).map(line => line.slice(name.length + 1, -7));
     const url = urls.length === 1 ? azureRepositoryUrl(urls[0]) : null;
     return url ? { name, url } : null;
-  }))).filter(Boolean);
+  }).filter(Boolean);
   const upstream = current?.upstream || '';
-  const tracking = head && upstream ? await run(root, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).then(s => s.trim().split(/\s+/).map(Number)).catch(() => null) : null;
-  const comparison = head && focusRef ? (await run(root, ['rev-list', '--left-right', '--count', `HEAD...${focusRef}`])).trim().split(/\s+/).map(Number) : null;
+  const tracking = head && upstream ? trackingCount : null;
+  // focusRef is only passed to Git after it matched a listed ref above.
   const revisions = focusRef ? [focusRef] : ['--all', ...(branch.trim() === 'Detached HEAD' ? ['HEAD'] : [])];
   const changes = parseGitChanges(status);
-  const graph = refs.trim() || branch.trim() === 'Detached HEAD'
-    ? await run(root, ['log', ...revisions, '--graph', '--topo-order', '--max-count=100', '--no-color', '--decorate=short', '--format=%h %s (%an, %ar)%d'])
-    : '';
-  const log = graph ? await run(root, ['log', ...revisions, '--topo-order', '-100', '--format=%H%x00%P%x00%s%x00%an%x00%aI%x00%D']) : '';
+  const hasHistory = refs.trim() || branch.trim() === 'Detached HEAD';
+  const [comparison, graph, log] = await Promise.all([
+    head && focusRef ? run(root, ['rev-list', '--left-right', '--count', `HEAD...${focusRef}`]).then(s => s.trim().split(/\s+/).map(Number)) : null,
+    hasHistory ? run(root, ['log', ...revisions, '--graph', '--topo-order', '--max-count=100', '--no-color', '--decorate=short', '--format=%h %s (%an, %ar)%d']) : '',
+    hasHistory ? run(root, ['log', ...revisions, '--topo-order', '-100', '--format=%H%x00%P%x00%s%x00%an%x00%aI%x00%D']) : ''
+  ]);
   const commits = log.trimEnd().split('\n').filter(Boolean).map(line => {
     const [hash, parents, subject, author, date, refs] = line.split('\0');
     return { hash, parents: parents.split(' ').filter(Boolean), subject, author, date, refs };
   });
-  return { head, remotes, azureRemotes, indexVersion: await indexVersion(root), upstream, tracking, comparison, root, branch: branch.trim(), branches: branches.trimEnd(), changes, graph, commits, branchRefs, focusRef };
+  return { head, remotes, azureRemotes, indexVersion: version, upstream, tracking, comparison, root, branch: branch.trim(), branches: branches.trimEnd(), changes, graph, commits, branchRefs, focusRef };
 }
 function parseGitChanges(status) {
   const changes = [], entries = status.split('\0');
@@ -110,7 +118,11 @@ async function readGitDiff(cwd, selection) {
   if (mode === 'commit' && !/^[a-f0-9]{40,64}$/.test(commit || '')) throw new Error('Invalid commit.');
   const options = ['--no-ext-diff', '--no-textconv', '--no-color'];
   const base = mode === 'commit' ? ['show', '--format=', '--diff-merges=first-parent', ...options, commit] : ['diff', ...options, ...(mode === 'staged' ? ['--cached'] : [])];
-  const changes = mode === 'all' ? parseGitChanges(await run(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])) : null;
+  const [status, headLookup] = await Promise.all([
+    mode === 'all' ? run(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']) : null,
+    mode === 'all' ? run(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(value => value.trim()).catch(error => { if (error.code === 1) return ''; throw error; }) : ''
+  ]);
+  const changes = status === null ? null : parseGitChanges(status);
   const names = changes ? changes.map(change => change.file) : (await run(root, mode === 'untracked'
     ? ['ls-files', '--others', '--exclude-standard', '-z']
     : [...base, '--name-only', '-z'])).split('\0').filter(Boolean);
@@ -118,8 +130,7 @@ async function readGitDiff(cwd, selection) {
   if (file !== undefined && !files.includes(file)) throw new Error('This file is no longer in the comparison. Refresh and select it again.');
   const selected = file === undefined ? files[0] : file;
   const change = changes?.findLast(item => item.file === selected);
-  const head = change && change.code !== '??' ? await run(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])
-    .then(value => value.trim()).catch(error => { if (error.code === 1) return ''; throw error; }) : '';
+  const head = change && change.code !== '??' ? headLookup : '';
   const comparison = { files, file: selected || '', ...(changes && { changes }) };
   let patch = '';
   if (selected && (mode === 'untracked' || change?.code === '??' || (!head && change?.code[0] === 'A' && change.code[1] !== 'D'))) {

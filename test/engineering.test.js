@@ -125,11 +125,15 @@ test('Bundled compiler resolves aliases and traces cycles and transitive depende
 test('Quality insights find cycles, test reach, orphans and a layered folder map', () => {
   const { analyze, architectureMap } = require('../src/engineering-graph');
   const nodes = ['src/a.js', 'src/b.js', 'src/lib/c.js', 'src/unused.js', 'main.js', 'test/a.test.js', 'scripts/tool.js'];
-  const link = (from, to) => ({ from, to, line: 1, column: 1 });
-  const edges = [link('main.js', 'src/a.js'), link('src/a.js', 'src/b.js'), link('src/b.js', 'src/a.js'), link('src/a.js', 'src/lib/c.js'), link('test/a.test.js', 'src/lib/c.js')];
+  const link = (from, to, line = 1) => ({ from, to, line, column: 1 });
+  const edges = [link('main.js', 'src/a.js'), link('src/a.js', 'src/b.js', 4), link('src/b.js', 'src/a.js', 7), link('src/a.js', 'src/lib/c.js'), link('test/a.test.js', 'src/lib/c.js')];
   const metrics = Object.fromEntries(nodes.map((file, index) => [file, { loc: 10 * (index + 1), complexity: index + 1, churn: file === 'src/a.js' ? 10 : 0 }]));
   const insights = analyze(nodes, edges, metrics, [], new Set(['main.js']), true);
-  assert.deepEqual(insights.cycles, [{ size: 2, files: ['src/a.js', 'src/b.js'] }]);
+  assert.deepEqual(insights.cycles, [{ size: 2, files: ['src/a.js', 'src/b.js'], loop: [{ from: 'src/a.js', to: 'src/b.js', line: 4 }, { from: 'src/b.js', to: 'src/a.js', line: 7 }] }]);
+  // The loop follows real import order, not alphabetical order, and takes the shortest way back.
+  const ring = analyze(['x.js', 'y.js', 'z.js'], [link('x.js', 'z.js', 2), link('z.js', 'y.js', 3), link('y.js', 'x.js', 5), link('z.js', 'x.js', 9)], { 'x.js': { loc: 1 }, 'y.js': { loc: 1 }, 'z.js': { loc: 1 } }, [], new Set(), true);
+  assert.deepEqual(ring.cycles[0].loop, [{ from: 'x.js', to: 'z.js', line: 2 }, { from: 'z.js', to: 'x.js', line: 9 }]);
+  assert.equal(ring.cycles[0].size, 3);
   assert.deepEqual(insights.orphans.files, ['src/unused.js']);
   assert.deepEqual(insights.untested.files.sort(), ['main.js', 'src/a.js', 'src/b.js', 'src/unused.js']);
   assert.equal(insights.hotspots[0].file, 'src/a.js');
@@ -172,4 +176,52 @@ test('C/C++/Arduino and Python sources yield imports, branches and function bodi
   const insights = analyze(Object.keys(metrics), [{ from: 'app/main.ino', to: 'app/page.h' }, { from: 'tests/page_test.cpp', to: 'app/page.h' }], metrics, [], new Set(['app/main.ino']), true);
   assert.deepEqual(insights.orphans.files, []);
   assert.deepEqual(insights.untested.files, ['app/main.ino']);
+});
+
+test('MATLAB, JVM, Go, Rust and other languages yield references, branches, functions and test reach', () => {
+  const { scanSource, resolveImport, analyze } = require('../src/engineering-graph');
+  const known = new Set(['lab/run.m', 'lab/filt.m', 'lab/+dsp/fir.m', 'lab/unused.m', 'lab/tests/filtTest.m', 'objc/View.h', 'objc/View.m',
+    'src/main/java/com/acme/App.java', 'src/main/java/com/acme/Util.java', 'src/main/java/com/acme/io/Reader.java', 'cmd/server.go', 'cmd/server_test.go', 'src/lib.rs', 'src/net.rs', 'lib/app/helper.rb']);
+  const byName = new Map();
+  for (const file of known) { const name = file.split('/').pop().toLowerCase(); byName.set(name, [...(byName.get(name) || []), file]); }
+  const resolve = (from, items) => items.map(item => resolveImport(from, item, known, byName));
+
+  // MATLAB: a script calls path functions by name (packages dotted); strings, comments and transposes are not code.
+  const script = scanSource('lab/run.m', "x = filt(data)';\ny = dsp.fir(x); % unused(x)\ns = 'filt(1)';\nif x > 0 && y\n  disp(s)\nend\n");
+  assert.equal(script.language, 'MATLAB');
+  assert.ok(script.entry, 'a MATLAB script is an entry point');
+  assert.equal(script.complexity, 3);
+  assert.deepEqual(resolve('lab/run.m', script.imports).filter(Boolean), ['lab/filt.m', 'lab/+dsp/fir.m']);
+  const fn = scanSource('lab/filt.m', 'function [y, n] = filt(x)\n' + 'if x, y = 1; end\n'.repeat(10) + 'n = helper(y);\nend\nfunction z = helper(y)\nz = y;\nend\n');
+  assert.ok(!fn.entry);
+  assert.deepEqual(fn.functions.map(item => [item.name, item.line, item.lines, item.complexity]), [['filt', 1, 13, 11]]);
+  assert.ok(!fn.imports.some(item => item.name === 'helper'), 'a local function shadows path lookup');
+  assert.equal(scanSource('objc/View.m', '#import "View.h"\n@implementation View\n@end\n').language, 'C/C++');
+
+  // Java: package imports and same-folder classes; a call is not a method header.
+  const app = scanSource('src/main/java/com/acme/App.java', [
+    'package com.acme;', 'import com.acme.io.Reader;', 'import java.util.List;', 'public class App {',
+    '  public static void main(String[] args) throws Exception {', '    Util.run(args.length > 0 ? 1 : 2);', '  }', '  abstract int size();', '}'].join('\n'));
+  assert.ok(app.entry);
+  assert.deepEqual(resolve('src/main/java/com/acme/App.java', app.imports).filter(Boolean).sort(), ['src/main/java/com/acme/Util.java', 'src/main/java/com/acme/io/Reader.java']);
+  const big = scanSource('src/main/java/com/acme/Util.java', 'class Util {\n  static int run(int a)\n  {\n' + '    if (a > 0) a--;\n'.repeat(10) + '  }\n}\n');
+  assert.deepEqual(big.functions.map(item => [item.name, item.line, item.complexity]), [['run', 2, 11]]);
+
+  // Go: receiver methods and raw strings; Rust: mod declarations and inline tests; Ruby: require and def…end bodies.
+  const go = scanSource('cmd/server.go', 'package main\nfunc (s *Server) Handle(w Writer) error {\n' + '\tif s == nil { return nil }\n'.repeat(10) + '\tq := `if {`\n\treturn nil\n}\n');
+  assert.ok(go.entry);
+  assert.deepEqual(go.functions.map(item => [item.name, item.lines, item.complexity]), [['Handle', 14, 11]]);
+  const rust = scanSource('src/lib.rs', "pub mod net;\nfn parse<'a>(s: &'a str) -> Option<&'a str> {\n    if s.is_empty() { None } else { Some(s) }\n}\n#[cfg(test)]\nmod tests {}\n");
+  assert.ok(rust.entry && rust.selfTested);
+  assert.deepEqual(resolve('src/lib.rs', rust.imports), ['src/net.rs']);
+  const ruby = scanSource('lib/app/main.rb', "require_relative 'helper'\nrequire 'json'\ndef call(x)\n" + '  return 1 if x\n'.repeat(10) + "rescue\n  nil\nend\n");
+  assert.deepEqual(resolve('lib/app/main.rb', ruby.imports), ['lib/app/helper.rb', undefined]);
+  assert.deepEqual(ruby.functions.map(item => [item.name, item.lines, item.complexity]), [['call', 14, 12]]);
+
+  // Test reach: filtTest.m covers filt.m by name, server_test.go its package, #[test] its own file; only reference-complete languages report orphans.
+  const files = ['lab/run.m', 'lab/filt.m', 'lab/unused.m', 'lab/tests/filtTest.m', 'cmd/server.go', 'cmd/server_test.go', 'src/lib.rs', 'src/net.rs', 'src/main/java/com/acme/Util.java'];
+  const metrics = Object.fromEntries(files.map(file => [file, { loc: 1, complexity: 1, churn: 0, ...(file === 'src/lib.rs' && { selfTested: true }) }]));
+  const insights = analyze(files, [{ from: 'lab/run.m', to: 'lab/filt.m' }, { from: 'src/lib.rs', to: 'src/net.rs' }], metrics, [], new Set(['lab/run.m', 'src/lib.rs', 'cmd/server.go']), true);
+  assert.deepEqual(insights.orphans.files, ['lab/unused.m']);
+  assert.deepEqual(insights.untested.files.sort(), ['lab/run.m', 'lab/unused.m', 'src/main/java/com/acme/Util.java']);
 });

@@ -140,8 +140,12 @@ test('Azure remotes map to credential-free, encoded PR URLs and require a publis
   const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','pipe']}).trim();
   git('init','-b','feature/test');git('config','user.name','Test');git('config','user.email','test@example.invalid');git('commit','--allow-empty','-m','Base');
   git('remote','add','azure','git@ssh.dev.azure.com:v3/acme/My%20Project/repo');
+  // A remote pushing to several URLs is ambiguous, and a URL-less remote is still listed.
+  git('remote','add','mirror','git@ssh.dev.azure.com:v3/acme/My%20Project/repo');git('config','--add','remote.mirror.pushurl','https://github.com/acme/repo');git('config','--add','remote.mirror.pushurl','git@ssh.dev.azure.com:v3/acme/My%20Project/repo');
+  git('config','remote.bare.fetch','+refs/heads/*:refs/remotes/bare/*');
   let repo=await readGitDashboard(root);
   assert.deepEqual(repo.azureRemotes,[{name:'azure',url:expected}]);
+  assert.deepEqual(repo.remotes,['azure','bare','mirror']);
   await assert.rejects(runGitOperation(root,'createPr',repo.head,repo.branch,{remote:'unknown'}),/Select an Azure/);
   await assert.rejects(runGitOperation(root,'createPr',repo.head,repo.branch,{remote:'azure'}),/Push this branch/);
   git('update-ref','refs/remotes/azure/feature/test',repo.head);

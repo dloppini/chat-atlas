@@ -4,7 +4,7 @@ Chat Atlas organizes local Codex and Claude Code conversation history in a visua
 
 ## Start
 
-Requires Visual Studio Code 1.96 or newer and local history from either supported provider. Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** on Windows and Linux or **Cmd+Alt+A** on macOS.
+Requires Visual Studio Code 1.96 or newer and local history from either supported provider. Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** on Windows and Linux or **Cmd+Alt+A** on macOS. While the board is focused, **Ctrl+N** (macOS: **Cmd+N**) starts a new chat in the selected project; change it with **Chat Atlas: Change New Chat Shortcut**.
 
 ## Engineering
 

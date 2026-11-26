@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.53 - 26 November 2026
+
+- See when each conversation was last active: every card shows **Active 3h ago** (a date after 30 days), next to the created date outside Timeline.
+- Sort conversations by **Last updated** or **Newest first** from the new **Sort** menu beside **Show done**. With **Last updated**, Timeline groups chats by the day they were last active. Your choice is remembered.
+- Open and refresh the Git view faster: independent Git reads now run together, which matters most on Windows.
+
+## 0.1.52 - 26 November 2026
+
+- Start a new chat in the selected project with **Ctrl+N** (macOS: **Cmd+N**) while the board is focused. Change it with **Chat Atlas: Change New Chat Shortcut** or from the Chat Atlas settings.
+
+## 0.1.51 - 25 November 2026
+
+- Analyze MATLAB, Java, Kotlin, Scala, C#, Go, Rust, Swift, Dart, PHP, Ruby, Lua, R, Julia, shell and Objective-C projects in Engineering: complexity, complex functions, imports and by-name references (MATLAB path and package functions, same-folder classes), cycles and test reach, including tests matched by name such as FooTest.java or filtTest.m.
+- Let Claude Code, Codex and other MCP clients query Engineering evidence through a local, read-only MCP server: quality report, file impact and architecture map. Choose **Connect agents** in Engineering, or run **Chat Atlas: Register MCP Server with Agents**, to register it with the installed agents.
+- Keep Git at the bottom of the board: **Keep at bottom** docks the Git view below your conversations as a compact, resizable pane that updates live as files and branches change. **Expand** returns to the full Git view.
+
 ## 0.1.49 - 25 November 2026
 
 - Analyze C, C++, Arduino and Python projects in Engineering: includes and imports, complexity, complex functions, cycles and test reach. Header and implementation pairs appear as one unit on the dependency map.

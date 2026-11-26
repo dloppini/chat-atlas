@@ -4,18 +4,17 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { readOnlyGit } = require('./git');
 
-const excluded = /(?:^|[/\\])(?:node_modules|dist|build|coverage|\.next|\.git)(?:[/\\]|$)/i;
+const excluded = /(?:^|[/\\])(?:node_modules|dist|build|coverage|vendor|\.next|\.git)(?:[/\\]|$)/i;
 const scriptSource = /\.[cm]?[jt]sx?$/i;
-const cSource = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ino)$/i;
+const cSource = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ino|mm)$/i;
 const pySource = /\.py$/i;
-const source = /\.(?:[cm]?[jt]sx?|c|cc|cpp|cxx|h|hh|hpp|hxx|ino|py)$/i;
 const header = /\.(?:h|hh|hpp|hxx)$/i;
 const stem = file => file.replace(/\.[^./]+$/, '');
 const config = /(?:^|\/)(?:[jt]sconfig\.json|package\.json)$/i;
 const maxFiles = 4500;
 const maxEdges = 18000;
 const maxBytes = 24 * 1024 * 1024;
-const testFile = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:spec|test)\.[cm]?[jt]sx?$|(?:^|\/)test_[^/]+$|_test\.(?:py|c|cc|cpp)$/i;
+const testFile = { test: file => /(?:^|\/)(?:tests?|__tests__|spec|testthat)\/|[._-](?:spec|test)s?\.\w+$|(?:^|\/)test[_-][^/]+$/i.test(file) || /[a-z\d](?:Tests?|Spec)\.\w+$|(?:^|\/)test[A-Z]\w*\.m$/.test(file) };
 const moduleName = file => file.includes('/') ? file.split('/')[0] : '(root)';
 const folderOf = file => file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '(root)';
 const normalize = file => file.split(path.sep).join('/');
@@ -114,22 +113,27 @@ async function indexFiles(repo, ts, signal) {
     }
     if (capped) break;
   }
-  // C/C++/Arduino and Python: lexical scan, no compiler or interpreter runs.
+  // Every other language: lexical scan, no compiler or interpreter runs.
   const known = new Set([...sourceFiles.map(file => normalize(path.relative(root, file))), ...generated]);
   const byName = new Map();
   for (const file of known) { const name = file.slice(file.lastIndexOf('/') + 1).toLowerCase(); byName.set(name, [...(byName.get(name) || []), file]); }
   const entries = new Set();
+  const languages = new Set(ts && [...known].some(file => scriptSource.test(file)) ? ['JS/TS'] : []);
+  if (generated.size) languages.add('C/C++');
   for (const [index, from] of [...known].filter(file => !scriptSource.test(file) && !generated.has(file)).entries()) {
     if (capped) break;
     if (index % 32 === 0) await new Promise(resolve => setImmediate(resolve));
     signal.throwIfAborted();
     const scanned = scanSource(from, text.get(normalize(path.join(root, from))));
-    metrics[from] = { loc: scanned.loc, complexity: scanned.complexity, churn: churn[from] || 0 };
+    metrics[from] = { loc: scanned.loc, complexity: scanned.complexity, churn: churn[from] || 0, ...(scanned.selfTested && { selfTested: true }) };
     functions.push(...scanned.functions);
+    languages.add(scanned.language);
     if (scanned.entry) entries.add(from);
     for (const item of scanned.imports) {
-      if (references++ >= maxEdges) { capped = true; break; }
       const to = resolveImport(from, item, known, byName);
+      // By-name candidates that match no file are ordinary identifiers, not unresolved imports.
+      if (item.implicit && !to) continue;
+      if (references++ >= maxEdges) { capped = true; break; }
       if (to && to !== from) edges.push({ from, to, line: item.line, column: 1 });
       else if (!to) {
         unresolvedCount++;
@@ -145,12 +149,11 @@ async function indexFiles(repo, ts, signal) {
     metrics[name] ||= { loc: lines(text.get(file)), complexity: null, churn: churn[name] || 0 };
   }
   for (const file of entryPoints(text, root)) entries.add(file);
-  const languages = [...new Set([...known].map(file => scriptSource.test(file) ? (ts ? 'JS/TS' : '') : cSource.test(file) ? 'C/C++' : 'Python'))].filter(Boolean);
-  const insights = analyze(nodes, visibleEdges, metrics, functions, entries, !!ts || languages.length > 0);
+  const insights = analyze(nodes, visibleEdges, metrics, functions, entries, !!ts || languages.size > 0);
   return {
     nodes, edges: visibleEdges, unresolved, metrics, insights, generated: [...generated], fingerprint: fingerprint.digest('hex'), engine: ts?.version,
     summary: { files: nodes.length, sourceFiles: sourceFiles.length, generated: generated.size, edges: visibleEdges.length, modules: new Set(nodes.map(moduleName)).size,
-      languages, unresolved: languages.length ? unresolvedCount : null, partial: (!ts && [...known].some(file => scriptSource.test(file))) || !sourceFiles.length || capped || skipped > 0 || files.length > maxFiles || inputs.length > maxFiles }
+      languages: [...languages], unresolved: languages.size ? unresolvedCount : null, partial: (!ts && [...known].some(file => scriptSource.test(file))) || !sourceFiles.length || capped || skipped > 0 || files.length > maxFiles || inputs.length > maxFiles }
   };
 }
 
@@ -228,21 +231,85 @@ function components(ids, next) {
 
 // Blanks comments and string literals, keeping newlines, so keyword counts and brace matching ignore them.
 const blank = match => match.replace(/[^\n]/g, ' ');
-const cNoise = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g;
-const pyNoise = /"""[\s\S]*?"""|'''[\s\S]*?'''|#[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g;
+const noise = (...parts) => new RegExp(parts.join('|'), 'g');
+const slashes = String.raw`\/\*[\s\S]*?\*\/|\/\/[^\n]*`, triple = '"""[\\s\\S]*?"""';
+const dq = String.raw`"(?:\\.|[^"\\\n])*"`, sq = String.raw`'(?:\\.|[^'\\\n])*'`, ch = String.raw`'(?:\\.|[^'\\\n])'`;
+const cNoise = noise(slashes, dq, sq);
 const cBranch = /\b(?:if|for|while|case|catch)\b|&&|\|\||\?/g;
-const pyBranch = /\b(?:if|elif|for|while|except|and|or|case)\b/g;
-const cFunction = /^[ \t]*[\w:<>,*&~ \t]*?\b(~?[A-Za-z_][\w:]*)[ \t]*\((?:[^;{}()]|\([^()]*\))*\)\s*(?:const\b\s*)?(?:noexcept\b\s*)?(?:override\b\s*)?(?::[^;{]*)?\{/gm;
-const keyword = /^(?:if|for|while|switch|catch|return|sizeof|else|do)$/;
+const braceBranch = /\b(?:if|for|foreach|while|case|catch|when|guard)\b|&&|\|\||\s\?\s/g;
+const hashBranch = /\b(?:if|elsif|elseif|unless|for|while|until|when|rescue|catch)\b|&&|\|\||\band\b|\bor\b/g;
+// Function headers. Brace bodies take the first defined capture as the name; indented bodies capture (indent, name).
+const signatureFunction = /^[ \t]*[\w:<>,*&~@\[\].? \t]*?\b(~?[A-Za-z_][\w:]*)[ \t]*\((?:[^;{}()]|\([^()]*\))*\)/gm;
+const keywordFunction = /\b(?:func|fn|fun|function|def)[ \t]+(?:\((?:[^()]|\([^()]*\))*\)[ \t]*)?(?:<[^>\n]*>[ \t]*)?((?:[A-Za-z_]\w*\.)*[A-Za-z_$][\w$]*)[ \t]*(?:<[^(\n]*>)?[ \t]*\((?:[^()]|\([^()]*\))*\)/g;
+const keyword = /^(?:if|for|while|switch|catch|return|sizeof|else|do|foreach|using|lock|synchronized|when|match|new|throw|use|fixed|elif|until)$/;
 const count = (text, pattern) => (text.match(pattern) || []).length;
+const withExt = (name, ext) => /\.\w+$/.test(name.slice(name.lastIndexOf('/') + 1)) ? name : name + ext;
+const mainEntry = (file, code) => /\bstatic\s+(?:async\s+)?[\w<>]+\s+[Mm]ain\s*\(|\b(?:fun|def)\s+main\s*\(|\bextends\s+App\b|\bvoid\s+main\s*\(/.test(code);
+// JVM imports name a package path; try the class file, then the enclosing file for static or nested members.
+const jvmImport = [/^\s*import\s+(?:static\s+)?([\w.]+?)\s*(?:\s+as\s+\w+)?\s*;?\s*$/, name => {
+  const parts = name.split('.');
+  return { name, candidates: [parts, parts.slice(0, -1)].filter(list => list.length > 1).flatMap(list => ['.java', '.kt', '.scala'].map(ext => list.join('/') + ext)) };
+}];
+// pattern: file extensions; imports: [row pattern, (name, file) => item]; implicit: references by name ('folder': same-folder class files, 'path': MATLAB path);
+// orphans: files are only reached through resolvable references, so a file nobody references is suspect.
+const lexicon = [
+  { name: 'C/C++', ext: 'c|cc|cpp|cxx|h|hh|hpp|hxx|ino|mm', noise: cNoise, branch: cBranch, fn: signatureFunction, orphans: true,
+    imports: [[/^\s*#\s*(?:include|import)\s*([<"][^>"]+)[>"]/, name => ({ name: name.slice(1).trim(), system: name[0] === '<' })]],
+    entry: (file, code) => /\.ino$/i.test(file) || /\b(?:int|void)\s+(?:main|setup)\s*\(/.test(code) },
+  { name: 'Python', ext: 'py', noise: /"""[\s\S]*?"""|'''[\s\S]*?'''|#[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, branch: /\b(?:if|elif|for|while|except|and|or|case)\b/g, orphans: true,
+    entry: (file, code, content) => /if\s+__name__\s*==\s*['"]__main__['"]/.test(content) },
+  { name: 'Java', ext: 'java', noise: noise(slashes, triple, dq, ch), branch: braceBranch, fn: signatureFunction, imports: [jvmImport], implicit: 'folder', entry: mainEntry },
+  { name: 'Kotlin', ext: 'kt|kts', noise: noise(slashes, triple, dq, ch), branch: braceBranch, fn: keywordFunction, imports: [jvmImport], implicit: 'folder', entry: mainEntry },
+  { name: 'Scala', ext: 'scala|sc', noise: noise(slashes, triple, dq, ch), branch: braceBranch, fn: keywordFunction, imports: [jvmImport], implicit: 'folder', entry: mainEntry },
+  { name: 'C#', ext: 'cs', noise: noise(slashes, '@"(?:""|[^"])*"', triple, dq, ch), branch: braceBranch, fn: signatureFunction, implicit: 'folder', entry: mainEntry },
+  { name: 'Go', ext: 'go', noise: noise(slashes, '`[^`]*`', dq, ch), branch: braceBranch, fn: keywordFunction, entry: (file, code) => /^\s*package\s+main\b/m.test(code) },
+  { name: 'Rust', ext: 'rs', noise: noise(slashes, 'r#*"[\\s\\S]*?"#*', dq, ch), branch: braceBranch, fn: keywordFunction, orphans: true, selfTested: /#\[(?:cfg\()?test\b/,
+    // `mod x;` loads x.rs or x/mod.rs beside a mod.rs/main.rs/lib.rs, else inside the declaring file's own folder.
+    imports: [[/^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/, (name, file) => ({ name, relative: true,
+      candidates: [name + '.rs', name + '/mod.rs', ...(/(?:^|\/)(?:mod|main|lib)\.rs$/.test(file) ? [] : [stem(file.slice(file.lastIndexOf('/') + 1)) + '/' + name + '.rs'])] })]],
+    entry: file => /(?:^|\/)(?:main|lib|build)\.rs$|(?:^|\/)(?:bin|examples|benches)\//.test(file) },
+  { name: 'Swift', ext: 'swift', noise: noise(slashes, triple, dq), branch: braceBranch, fn: keywordFunction, implicit: 'folder',
+    entry: (file, code) => /(?:^|\/)main\.swift$/.test(file) || /@main\b/.test(code) },
+  { name: 'Dart', ext: 'dart', noise: noise(slashes, "'''[\\s\\S]*?'''", triple, dq, sq), branch: braceBranch, fn: signatureFunction, orphans: true, entry: mainEntry,
+    imports: [[/^\s*(?:import|export|part)\s+['"]([^'"]+)['"]/, name => name.startsWith('dart:') ? null
+      : name.startsWith('package:') ? { name, candidates: ['lib/' + name.slice(name.indexOf('/') + 1)] } : { name, candidates: [name], relative: true }]] },
+  { name: 'PHP', ext: 'php', noise: noise(slashes, '#(?!\\[)[^\\n]*', dq, sq), branch: braceBranch, fn: keywordFunction,
+    imports: [[/^\s*(?:require|include)(?:_once)?\b[\s(]*(?:__DIR__\s*\.\s*)?['"]\/?([^'"]+)['"]/, name => ({ name, candidates: [name] })],
+      [/^\s*use\s+(?:function\s+|const\s+)?\\?([\w\\]+)\s*(?:as\s+\w+\s*)?;/, name => ({ name, candidates: [name.replace(/\\/g, '/') + '.php'] })]] },
+  { name: 'Ruby', ext: 'rb|rake', noise: noise('#[^\\n]*', dq, sq), branch: hashBranch, fn: /^([ \t]*)def[ \t]+(?:self\.)?([\w?!=]+)/, body: 'indent',
+    imports: [[/^\s*require_relative\s*\(?\s*['"]([^'"]+)['"]/, name => ({ name, candidates: [withExt(name, '.rb')], relative: true })],
+      [/^\s*(?:require|load)\s*\(?\s*['"]([^'"]+)['"]/, name => ({ name, candidates: [withExt(name, '.rb')] })]] },
+  { name: 'Lua', ext: 'lua', noise: noise('--\\[(=*)\\[[\\s\\S]*?\\]\\1\\]', '--[^\\n]*', dq, sq), branch: hashBranch, fn: /^([ \t]*)(?:local[ \t]+)?function[ \t]+([\w.:]+)/, body: 'indent',
+    imports: [[/\brequire\s*\(?\s*['"]([\w./-]+)['"]/, name => ({ name, candidates: [name.replace(/\./g, '/') + '.lua', name.replace(/\./g, '/') + '/init.lua'] })]] },
+  { name: 'R', ext: 'r', noise: noise('#[^\\n]*', dq, sq), branch: /\b(?:if|for|while|repeat)\b|&&|\|\|/g, fn: /^[ \t]*([\w.]+)[ \t]*(?:<-|=)[ \t]*function[ \t]*\((?:[^()]|\([^()]*\))*\)/gm,
+    imports: [[/\bsource\s*\(\s*['"]([^'"]+)['"]/, name => ({ name, candidates: [name] })]] },
+  { name: 'Julia', ext: 'jl', noise: noise('#=[\\s\\S]*?=#', '#[^\\n]*', triple, dq), branch: hashBranch, fn: /^([ \t]*)function[ \t]+([\w.!]+)/, body: 'indent',
+    imports: [[/\binclude\s*\(\s*"([^"]+)"/, name => ({ name, candidates: [name], relative: true })]] },
+  { name: 'MATLAB', ext: 'm', noise: noise('%\\{[\\s\\S]*?%\\}', '%[^\\n]*', '\\.\\.\\.[^\\n]*', '"(?:""|[^"\\n])*"', "(?<![\\w)\\]}.'])'(?:''|[^'\\n])*'"),
+    branch: /\b(?:if|elseif|for|parfor|while|case|catch)\b|&&|\|\|/g, fn: /^([ \t]*)function[ \t]+(?:(?:\[[^\]\n]*\]|\w+)[ \t]*=[ \t]*)?([A-Za-z][\w.]*)/, body: 'next',
+    // Scripts (no leading function or classdef) run from the command line, so they are entry points.
+    implicit: 'path', orphans: true, entry: (file, code) => !/^\s*(?:function|classdef)\b/.test(code) },
+  { name: 'Shell', ext: 'sh|bash|zsh', noise: noise('(?<![$\\\\\\w{])#[^\\n]*', dq, "'[^']*'"), branch: /\b(?:if|elif|for|while|until)\b|&&|\|\||;;/g,
+    fn: /^[ \t]*(?:function[ \t]+([A-Za-z_][\w:.-]*)|([A-Za-z_][\w:.-]*)[ \t]*\(\s*\))/gm,
+    imports: [[/^\s*(?:source|\.)\s+["']?(?:\$\{?\w+\}?\/)?([\w./-]+\.(?:sh|bash|zsh))/, name => ({ name, candidates: [name] })]] }
+];
+for (const lang of lexicon) lang.pattern = new RegExp(`\\.(?:${lang.ext})$`, 'i');
+const source = new RegExp(`\\.(?:[cm]?[jt]sx?|${lexicon.map(lang => lang.ext).join('|')})$`, 'i');
+const objectiveC = /^\s*(?:#\s*(?:import|include)|@(?:interface|implementation|import|protocol))\b/m;
+// .m is MATLAB unless the file reads as Objective-C.
+const languageOf = (file, content) => /\.m$/i.test(file) && objectiveC.test(content) ? lexicon[0] : lexicon.find(lang => lang.pattern.test(file));
 
-// Lexical scan for C/C++/Arduino and Python: imports, decision points and function bodies.
+// Lexical scan: imports, decision points and function bodies; no compiler or interpreter runs.
 function scanSource(file, content) {
-  const python = pySource.test(file);
-  const code = content.replace(python ? pyNoise : cNoise, blank);
+  const lang = languageOf(file, content);
+  const code = content.replace(lang.noise, blank);
   const rows = code.split('\n');
-  const imports = [], functions = [];
-  if (python) {
+  const imports = [], functions = [], defined = new Set();
+  const starts = [0];
+  for (let index = code.indexOf('\n'); index >= 0; index = code.indexOf('\n', index + 1)) starts.push(index + 1);
+  const lineAt = offset => { let low = 0, high = starts.length - 1; while (low < high) { const mid = (low + high + 1) >> 1; if (starts[mid] <= offset) low = mid; else high = mid - 1; } return low + 1; };
+  const add = (name, line, lines, complexity) => { defined.add(name); functions.push({ file, name: name.slice(0, 80), line, lines, complexity }); };
+  if (lang.name === 'Python') {
     rows.forEach((row, index) => {
       let match = /^\s*from\s+(\.*[\w.]*)\s+import\s+(.+)/.exec(row);
       if (match) imports.push({ name: match[1], line: index + 1, names: match[2].replace(/[()\\]/g, '').split(',').map(name => name.trim().split(/\s+/)[0]).filter(name => /^\w+$/.test(name)) });
@@ -259,63 +326,102 @@ function scanSource(file, content) {
         if (/^\s*/.exec(rows[next])[0].length <= fn[1].length) break;
         end = next;
       }
-      functions.push({ file, name: fn[2], line: index + 1, lines: end - index + 1, complexity: 1 + count(rows.slice(index, end + 1).join('\n'), pyBranch) });
+      add(fn[2], index + 1, end - index + 1, 1 + count(rows.slice(index, end + 1).join('\n'), lang.branch));
     });
   } else {
+    // Imports are read from the original row (string paths survive) only where the stripped row keeps the keyword, so commented-out imports are skipped.
     content.split('\n').forEach((row, index) => {
-      const match = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/.exec(row);
-      if (match && /^\s*#/.test(rows[index])) imports.push({ name: match[2].trim(), line: index + 1, system: match[1] === '<' });
+      const kept = rows[index].trimStart();
+      if (!kept || kept[0] !== row.trimStart()[0]) return;
+      for (const [pattern, map] of lang.imports || []) {
+        const match = pattern.exec(row), item = match && map(match[1], file);
+        if (item) imports.push({ ...item, line: index + 1 });
+      }
     });
-    const starts = [0];
-    for (let index = code.indexOf('\n'); index >= 0; index = code.indexOf('\n', index + 1)) starts.push(index + 1);
-    const lineAt = offset => { let low = 0, high = starts.length - 1; while (low < high) { const mid = (low + high + 1) >> 1; if (starts[mid] <= offset) low = mid; else high = mid - 1; } return low + 1; };
-    cFunction.lastIndex = 0;
-    for (let match; (match = cFunction.exec(code));) {
-      const open = match.index + match[0].length - 1;
-      let depth = 0, close = open;
-      for (; close < code.length; close++) { if (code[close] === '{') depth++; else if (code[close] === '}' && !--depth) break; }
-      if (keyword.test(match[1])) continue;
-      const begin = lineAt(match.index + match[0].search(/\S/));
-      functions.push({ file, name: match[1], line: begin, lines: lineAt(close) - begin + 1, complexity: 1 + count(code.slice(open, close), cBranch) });
-      cFunction.lastIndex = close + 1;
+    if (!lang.body) {
+      lang.fn.lastIndex = 0;
+      for (let match; (match = lang.fn.exec(code));) {
+        const name = match.slice(1).find(Boolean), after = match.index + match[0].length;
+        // The body brace follows the header; `;` (declaration) or `= expr` (expression body) means there is none.
+        const gap = /^[^;{}=]*?(?:=\s*)?\{/.exec(code.slice(after, after + 400));
+        if (!gap || keyword.test(name) || /\b(?:func|fn|fun|def|function)\s/.test(gap[0])) continue;
+        const open = after + gap[0].length - 1;
+        let depth = 0, close = open;
+        for (; close < code.length; close++) { if (code[close] === '{') depth++; else if (code[close] === '}' && !--depth) break; }
+        const begin = lineAt(match.index + match[0].search(/\S/));
+        add(name, begin, lineAt(close) - begin + 1, 1 + count(code.slice(open, close), lang.branch));
+        lang.fn.lastIndex = close + 1;
+      }
+    } else rows.forEach((row, index) => {
+      const match = lang.fn.exec(row);
+      if (!match) return;
+      const indent = match[1].length;
+      let end = index;
+      for (let next = index + 1; next < rows.length; next++) {
+        if (!rows[next].trim()) continue;
+        const depth = /^\s*/.exec(rows[next])[0].length;
+        // shortcut: MATLAB bodies run to the next function at the same indent (top-level bodies are often unindented); nested `end` counting would be exact.
+        if (lang.body === 'next') { if (depth <= indent && lang.fn.test(rows[next])) break; }
+        else if (depth <= indent && !/^\s*(?:rescue|ensure)\b/.test(rows[next])) { if (/^\s*end\b/.test(rows[next])) end = next; break; }
+        end = next;
+      }
+      add(match[2], index + 1, end - index + 1, 1 + count(rows.slice(index, end + 1).join('\n'), lang.branch));
+    });
+  }
+  // Same-folder classes (JVM, C#, Swift) and MATLAB path functions are used by name without an import; candidates resolve only when a file matches.
+  if (lang.implicit) {
+    const seen = new Set([stem(file.slice(file.lastIndexOf('/') + 1)), ...defined]);
+    for (const match of code.matchAll(lang.implicit === 'folder' ? /\b[A-Z]\w*/g : /(?<![\w.])[A-Za-z]\w*(?:\.[A-Za-z]\w*)*/g)) {
+      if (!seen.has(match[0])) { seen.add(match[0]); imports.push({ name: match[0], line: lineAt(match.index), implicit: lang.implicit }); }
     }
   }
-  const entry = /\.ino$/i.test(file) || (python ? /if\s+__name__\s*==\s*['"]__main__['"]/.test(content) : /\b(?:int|void)\s+(?:main|setup)\s*\(/.test(code));
-  return { loc: lines(content), complexity: 1 + count(code, python ? pyBranch : cBranch), imports, entry,
+  return { language: lang.name, loc: lines(content), complexity: 1 + count(code, lang.branch), imports, entry: !!lang.entry?.(file, code, content), selfTested: !!lang.selfTested?.test(code),
     functions: functions.filter(item => item.complexity >= 10 || item.lines >= 60) };
 }
 
 const sharedDepth = (a, b) => { const x = a.split('/'), y = b.split('/'); let depth = 0; while (depth < x.length && x[depth] === y[depth]) depth++; return depth; };
-// Resolves a C include or Python import to an indexed file; external and system modules stay unresolved.
+// Resolves an import, include or by-name reference to an indexed file; external and system modules stay unresolved.
 function resolveImport(from, item, known, byName) {
   const dir = path.posix.dirname(from);
-  if (!pySource.test(from)) {
-    const relative = path.posix.normalize(path.posix.join(dir, item.name));
-    if (known.has(relative)) return relative;
-    // Include paths are unknown without the build system; match the path suffix, nearest folder first.
-    const wanted = '/' + item.name.toLowerCase();
-    // <system> includes only match inside the includer's top-level folder, so test stubs elsewhere never stand in for the SDK.
-    return (byName.get(item.name.split('/').pop().toLowerCase()) || []).filter(file => ('/' + file).toLowerCase().endsWith(wanted) && (!item.system || sharedDepth(file, from) > 0))
-      .sort((a, b) => sharedDepth(b, from) - sharedDepth(a, from))[0];
+  const nearest = (name, keep) => (byName.get(name.toLowerCase()) || []).filter(keep).sort((a, b) => sharedDepth(b, from) - sharedDepth(a, from))[0];
+  if (item.implicit === 'folder') { const to = path.posix.join(dir, item.name + path.posix.extname(from)); return known.has(to) ? to : undefined; }
+  if (item.implicit === 'path') {
+    // pkg.fn lives in +pkg/fn.m; a bare name never reaches into a package folder.
+    const parts = item.name.split('.'), name = parts.pop() + '.m', wanted = '/' + parts.map(part => '+' + part + '/').join('') + name;
+    return nearest(name, file => ('/' + file).endsWith(wanted) && (parts.length > 0 || !/(?:^|\/)\+/.test(file)));
   }
-  const dots = /^\.*/.exec(item.name)[0].length;
-  const parts = item.name.slice(dots).split('.').filter(Boolean);
-  let bases = [dir, '.', 'src'];
-  if (dots) { let base = dir; for (let level = 1; level < dots; level++) base = path.posix.dirname(base); bases = [base]; }
-  for (const base of bases) {
-    const prefix = [base === '.' ? '' : base, ...parts].filter(Boolean).join('/');
-    for (const module of [...(item.names || []).map(name => [prefix, name].filter(Boolean).join('/')), prefix]) {
-      if (module && known.has(module + '.py')) return module + '.py';
-      if (module && known.has(module + '/__init__.py')) return module + '/__init__.py';
+  if (pySource.test(from)) {
+    const dots = /^\.*/.exec(item.name)[0].length;
+    const parts = item.name.slice(dots).split('.').filter(Boolean);
+    let bases = [dir, '.', 'src'];
+    if (dots) { let base = dir; for (let level = 1; level < dots; level++) base = path.posix.dirname(base); bases = [base]; }
+    for (const base of bases) {
+      const prefix = [base === '.' ? '' : base, ...parts].filter(Boolean).join('/');
+      for (const module of [...(item.names || []).map(name => [prefix, name].filter(Boolean).join('/')), prefix]) {
+        if (module && known.has(module + '.py')) return module + '.py';
+        if (module && known.has(module + '/__init__.py')) return module + '/__init__.py';
+      }
     }
+    return;
+  }
+  for (const name of item.candidates || [item.name]) {
+    const relative = path.posix.normalize(path.posix.join(dir, name));
+    if (known.has(relative)) return relative;
+    if (item.relative) continue;
+    // Include and source paths are unknown without the build system; match the path suffix, nearest folder first.
+    // <system> includes only match inside the includer's top-level folder, so test stubs elsewhere never stand in for the SDK.
+    const wanted = '/' + name.toLowerCase();
+    const found = nearest(name.split('/').pop(), file => ('/' + file).toLowerCase().endsWith(wanted) && (!item.system || sharedDepth(file, from) > 0));
+    if (found) return found;
   }
 }
 
-// C/C++: a header and its same-named implementation are one unit; code using the header uses the implementation.
+// C/C++/Objective-C: a header and its same-named implementation are one unit; code using the header uses the implementation.
+const companion = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|m|mm)$/i;
 function companionsOf(files) {
   const stems = new Map();
-  for (const file of files) if (cSource.test(file) && !/\.ino$/i.test(file)) { const key = stem(file).toLowerCase(); stems.set(key, [...(stems.get(key) || []), file]); }
-  return file => cSource.test(file) ? (stems.get(stem(file).toLowerCase()) || []).filter(other => other !== file) : [];
+  for (const file of files) if (companion.test(file)) { const key = stem(file).toLowerCase(); stems.set(key, [...(stems.get(key) || []), file]); }
+  return file => companion.test(file) ? (stems.get(stem(file).toLowerCase()) || []).filter(other => other !== file) : [];
 }
 
 function analyze(nodes, edges, metrics, functions, entries, compiled) {
@@ -325,18 +431,50 @@ function analyze(nodes, edges, metrics, functions, entries, compiled) {
   const cycles = components(sources, file => outgoing.get(file))
     .filter(group => group.length > 1 || outgoing.get(group[0]).has(group[0]))
     .sort((a, b) => b.length - a.length);
-  const tests = sources.filter(file => testFile.test(file));
+  const importLine = new Map();
+  for (const edge of edges) if (!importLine.has(edge.from + '\n' + edge.to)) importLine.set(edge.from + '\n' + edge.to, edge.line);
+  // Shortest import chain from the alphabetically first member back to itself, with the line of each import.
+  const loopOf = group => {
+    const members = new Set(group), start = [...group].sort()[0], prev = new Map();
+    for (const queue = [start]; queue.length;) {
+      const file = queue.shift();
+      for (const next of outgoing.get(file)) {
+        if (next === start) {
+          const chain = [file];
+          while (chain[0] !== start) chain.unshift(prev.get(chain[0]));
+          chain.push(start);
+          return chain.slice(0, -1).map((from, index) => ({ from, to: chain[index + 1], line: importLine.get(from + '\n' + chain[index + 1]) }));
+        }
+        if (members.has(next) && !prev.has(next)) { prev.set(next, file); queue.push(next); }
+      }
+    }
+  };
+  const tests =sources.filter(file => testFile.test(file));
   const companions = companionsOf(sources);
-  const covered = new Set(tests);
-  for (const queue = [...tests]; queue.length;) {
+  // Outside JS/TS, Python and C, tests rarely import what they test by path: a test also covers its same-named source (FooTest.java → Foo.java),
+  // a Go test its package folder, and a Rust file with #[test] itself.
+  const linkedTest = /\.(?:[cm]?[jt]sx?|py|c|cc|cpp|cxx|h|hh|hpp|hxx|ino)$/i;
+  const base = file => stem(file.slice(file.lastIndexOf('/') + 1));
+  const bare = file => { const name = base(file).replace(/[._-]?(?:test|spec)s?$/i, ''); return name !== base(file) ? name : name.replace(/^test[_-]?/i, ''); };
+  const byStem = new Map();
+  for (const file of sources) { const key = (base(file) + path.posix.extname(file)).toLowerCase(); byStem.set(key, [...(byStem.get(key) || []), file]); }
+  const seeds = sources.filter(file => metrics[file]?.selfTested);
+  for (const test of tests) if (!linkedTest.test(test)) {
+    seeds.push(...(byStem.get((bare(test) + path.posix.extname(test)).toLowerCase()) || []));
+    if (/\.go$/i.test(test)) seeds.push(...sources.filter(file => folderOf(file) === folderOf(test)));
+  }
+  const covered = new Set([...tests, ...seeds]);
+  for (const queue = [...covered]; queue.length;) {
     const file = queue.pop();
     for (const next of [...(outgoing.get(file) || []), ...companions(file)]) if (!covered.has(next)) { covered.add(next); queue.push(next); }
   }
   const production = sources.filter(file => !testFile.test(file));
   const tooling = /(?:^|\/)(?:scripts?|bin|tools)\/|(?:^|\/)[^/]*\.config\.[cm]?[jt]s$/i;
-  // C/C++ implementation files are compiled and linked, never included, so only headers can be orphans.
-  const orphans = compiled ? production.filter(file => !incoming.get(file).size && !companions(file).some(other => incoming.get(other)?.size) && !entries.has(file) && !tooling.test(file) && !/\.(?:c|cc|cpp|cxx)$/i.test(file)) : [];
-  const untested = compiled && tests.length ? production.filter(file => !covered.has(file) && !tooling.test(file)) : [];
+  // Only languages whose every use is a resolvable reference can have orphans. C/C++ implementation files are compiled and linked, never included,
+  // so only headers can; JVM, C#, Go, Ruby or PHP code is also reached by package, autoload or framework wiring the scan cannot see.
+  const orphanable = file => scriptSource.test(file) || (!!lexicon.find(lang => lang.pattern.test(file))?.orphans && !/\.(?:c|cc|cpp|cxx|mm)$/i.test(file));
+  const orphans = compiled ? production.filter(file => !incoming.get(file).size && !companions(file).some(other => incoming.get(other)?.size) && !entries.has(file) && !tooling.test(file) && orphanable(file)) : [];
+  const untested = compiled && (tests.length || seeds.length) ? production.filter(file => !covered.has(file) && !tooling.test(file)) : [];
   const folders = new Map();
   for (const file of sources) {
     const name = folderOf(file), folder = folders.get(name) || { folder: name, files: 0, loc: 0, complexity: 0, afferent: new Set(), efferent: new Set() };
@@ -354,7 +492,7 @@ function analyze(nodes, edges, metrics, functions, entries, compiled) {
     loc: sources.reduce((sum, file) => sum + (metrics[file]?.loc || 0), 0),
     tests: tests.length,
     churn: sources.some(file => metrics[file]?.churn),
-    cycles: cycles.slice(0, 20).map(group => ({ size: group.length, files: group.sort().slice(0, 12) })),
+    cycles: cycles.slice(0, 20).map(group => ({ size: group.length, files: group.sort().slice(0, 12), loop: loopOf(group) })),
     cycleFiles: cycles.flat(),
     hotspots,
     functions: functions.sort((a, b) => b.complexity - a.complexity || b.lines - a.lines).slice(0, 20),

@@ -10,13 +10,13 @@ Install [Chat Atlas by LPX](https://marketplace.visualstudio.com/items?itemName=
 code --install-extension LPX.lpx-conversation-board
 ```
 
-Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar.
+Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A** (macOS: **Cmd+Alt+A**). After first activation, **Chat Atlas** is also available in the status bar. Keep the board in the editor while working in the provider sidebar. While the board is focused, **Ctrl+N** (macOS: **Cmd+N**) starts a new chat in the selected project; change it with **Chat Atlas: Change New Chat Shortcut**.
 
 The published extension ID is `LPX.lpx-conversation-board`. Earlier packages used `local-tools.chat-atlas` or `lpx.chat-atlas`, separate extension identities with separate organization metadata. When switching, disable earlier installations to avoid duplicate commands. Existing transcripts are unaffected.
 
 The current local package is **chat-atlas-0.1.49.vsix**. Published installers are available from the [latest GitHub release](https://github.com/dloppini/chat-atlas/releases/latest). Use **Extensions → … → Install from VSIX…** to install a package.
 
-Select a project and open **Engineering** to review its repository, explore local file dependencies, or trace the impact of a change. Choose **Refresh analysis** to capture a snapshot. **Chat Atlas: Select Project** opens the same project selection from the Command Palette. See the [Engineering Control Center guide](ENGINEERING-CONTROL-CENTER-SPEC.md) for setup, coverage and verification.
+Select a project and open **Engineering** to review its repository, explore local file dependencies, or trace the impact of a change. Choose **Refresh analysis** to capture a snapshot. **Chat Atlas: Select Project** opens the same project selection from the Command Palette. Agents can query the same evidence through a local MCP server; choose **Connect agents** in Engineering to register it with Claude Code and Codex. See the [Engineering Control Center guide](ENGINEERING-CONTROL-CENTER-SPEC.md) for setup, coverage and verification.
 
 ![Chat Atlas topic board with fictional Codex and Claude Code conversations](https://raw.githubusercontent.com/dloppini/chat-atlas/v0.1.6/media/board-preview.png)
 

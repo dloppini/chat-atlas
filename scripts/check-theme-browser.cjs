@@ -34,7 +34,7 @@ async page => {
   await page.evaluate(()=>document.body.classList.remove('vscode-high-contrast'));
   await page.evaluate(theme => window.dispatchEvent(new MessageEvent('message', {data: {type: 'theme', theme}})), 'pearl');
   await page.locator('#conversation-switch').focus();
-  for (const id of ['git-switch', 'new-chat', 'settings', 'feedback', 'refresh']) {
+  for (const id of ['git-switch', 'engineering-switch', 'new-chat', 'settings', 'feedback', 'refresh']) {
     await page.keyboard.press('Tab');
     if (await page.evaluate(() => document.activeElement.id) !== id) throw Error('Header focus order: ' + id);
   }
@@ -48,7 +48,7 @@ async page => {
       const ctx=document.createElement('canvas').getContext('2d');
       function lum(color){ctx.fillStyle=color;ctx.fillRect(0,0,1,1);const a=[...ctx.getImageData(0,0,1,1).data].slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return a[0]*.2126+a[1]*.7152+a[2]*.0722;}
       const root=getComputedStyle(document.body);const v=k=>root.getPropertyValue(k).trim();
-      return [['body',v('--text'),v('--bg')],['secondary',v('--muted'),v('--panel')],['accent',v('--accent'),getComputedStyle(document.querySelector('#new-chat')).backgroundColor]].map(([name,fg,bg])=>{const a=lum(fg),b=lum(bg);return {name,ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};});
+      return [['body',v('--text'),v('--bg')],['secondary',v('--muted'),v('--panel')],['accent',getComputedStyle(document.querySelector('#new-chat')).color,getComputedStyle(document.querySelector('#new-chat')).backgroundColor]].map(([name,fg,bg])=>{const a=lum(fg),b=lum(bg);return {name,ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};});
     });
     if(ratios.some(r=>r.ratio<4.5))throw Error('Low contrast '+JSON.stringify(ratios));contrast.push({theme,ratios});
     await page.setViewportSize({width:1440,height:1000});

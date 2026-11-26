@@ -30,10 +30,11 @@ async function extensionHarness(t, stored = {}, sessions = []) {
   await fs.mkdir(path.join(folder, 'Subfolder'), { recursive: true });
   const file = path.join(root, 'file.txt');
   await fs.writeFile(file, 'fixture');
-  const messages = [], errors = [], pickerCalls = [], openedFolders = [], chats = [], commands = new Map(), intervals = [], timeouts = [], watchers = [], subscriptions = [];
+  const agentCalls = [], messages = [], errors = [], pickerCalls = [], openedFolders = [], chats = [], commands = new Map(), intervals = [], timeouts = [], watchers = [], subscriptions = [];
   const storage = structuredClone(stored);
-  let uriHandler, tileAction, selectedFolder, receive, inputValue, activityResult, scanCount = 0, disposePanel, feedbackChoice, browserResult = true;
-  const feedbackPickers = [];
+  let missingAgent, uriHandler, tileAction, selectedFolder, receive, inputValue, activityResult, scanCount = 0, disposePanel, feedbackChoice, browserResult = true;
+  const feedbackPickers = [], infoMessages = [];
+  let infoChoice = stored.infoChoice;
   const uri = folderPath => ({ scheme: 'file', fsPath: folderPath, path: folderPath, toString: () => folderPath });
   const vscode = {
     EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} },
@@ -53,6 +54,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
       registerUriHandler: handler => { uriHandler = handler; return { dispose() {} }; },
       registerWebviewPanelSerializer: () => ({ dispose() {} }),
       showErrorMessage: text => errors.push(text),
+      showInformationMessage: async (...args) => { infoMessages.push(args); return infoChoice; },
       showInputBox: async options => { pickerCalls.push(options); return inputValue; },
       showQuickPick: async (items,options) => { feedbackPickers.push({items,options}); return items.find(item => item.id === feedbackChoice); },
       showOpenDialog: async options => { pickerCalls.push(options); return selectedFolder; },
@@ -73,6 +75,11 @@ async function extensionHarness(t, stored = {}, sessions = []) {
     require: name => {
       if (name === 'vscode') return vscode;
       if (name === './engineering') return require('../src/engineering');
+      if (name === './codex-chat') return require('../src/codex-chat');
+      if (name === 'node:child_process') return { execFile: (file, args, options, callback) => {
+        agentCalls.push({ file, args, env: options.env });
+        callback(file === missingAgent ? Object.assign(new Error('spawn ' + file + ' ENOENT'), { code: 'ENOENT' }) : null, '', '');
+      } };
       if (name === './core') return { ...core, SessionIndex: class {
         async scan() { scanCount++; return { sessions: structuredClone(sessions), sources: [], errors: [] }; }
         async refreshActivity(current) { return activityResult ? await activityResult(current) : structuredClone(sessions); }
@@ -87,16 +94,28 @@ async function extensionHarness(t, stored = {}, sessions = []) {
   }, { filename: 'extension.js' });
   const extensionPath = path.resolve(__dirname, '..');
   const api = module.exports.activate({
-    extensionPath, extensionUri: uri(extensionPath), subscriptions,
+    extensionPath, extensionUri: uri(extensionPath), globalStorageUri: uri(path.join(root, "storage")), subscriptions,
     globalState: { get: (key, fallback) => storage[key] || fallback, update: async (key, value) => { storage[key] = structuredClone(value); } }
   });
   await commands.get('chatAtlas.open')();
   await api.refresh();
-  return { root, folder, file, messages, errors, pickerCalls, openedFolders, chats, storage, api, intervals, timeouts, watchers, subscriptions,
+  return { agentCalls, missAgent: value => { missingAgent = value; }, root, folder, file, messages, errors, pickerCalls, openedFolders, chats, storage, api, intervals, timeouts, watchers, subscriptions,
     vscode, commands, uriHandler, tileAction: value => { tileAction = value; }, send: m => receive(m), pick: value => { selectedFolder = value; }, input: value => { inputValue = value; }, latest: () => messages.findLast(m => m.type === 'data'),
     setSessions: value => { sessions = value; }, setActivity: value => { activityResult = value; }, scanCount: () => scanCount, trust: () => { vscode.workspace.isTrusted = true; },
-    feedbackPickers, chooseFeedback: value => { feedbackChoice = value; }, failBrowser: () => { browserResult = false; } };
+    feedbackPickers, infoMessages, chooseFeedback: value => { feedbackChoice = value; }, failBrowser: () => { browserResult = false; } };
 }
+
+test('New chat shortcut is offered once, can be changed and opens the dialog from the board', async t => {
+  const h = await extensionHarness(t, { infoChoice: 'Change shortcut' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.infoMessages.length, 1); assert.match(h.infoMessages[0][0], /new chat/);
+  assert.deepEqual(h.chats.find(c => c[0] === 'workbench.action.openGlobalKeybindings'), ['workbench.action.openGlobalKeybindings', 'chatAtlas.newChat']);
+  assert.equal(h.storage.newChatShortcutOffered, true);
+  await h.commands.get('chatAtlas.newChat')();
+  assert.equal(h.messages.at(-1).type, 'newChatShortcut');
+  const pkg = require('../package.json');
+  assert.ok(pkg.contributes.keybindings.some(k => k.command === 'chatAtlas.newChat' && k.key === 'ctrl+n' && k.when.includes('chatAtlas.board')));
+});
 
 test('Feedback opens editable GitHub drafts, excludes conversation data and preserves cancellation', async t => {
   const h = await extensionHarness(t, {}, [{key:'codex:private',provider:'codex',project:'Private Project',cwd:'/private/client',title:'Confidential chat',preview:'Private conversation',createdAt:1,updatedAt:2}]);
@@ -467,4 +486,26 @@ test('Explorer resumes the matching historical chat and passage search selects t
   await h.send({type:'passages',key:s.key,query:'focus'});
   assert.equal(shown.doc.content.slice(shown.range.start,shown.range.end),'focus');
   for(const text of messages) assert.ok(shown.doc.content.includes(text));
+});
+
+test('Connect agents registers the MCP launcher through each installed agent CLI', async t => {
+  const h = await extensionHarness(t);
+  const launcher = path.join(h.root, 'storage', 'mcp-server.js');
+  await h.send({ type: 'registerMcp' });
+  assert.match(await fs.readFile(launcher, 'utf8'), /require(.*mcp.js.*).serve()/);
+  assert.deepEqual(h.agentCalls.map(call => [call.file, ...call.args]), [
+    ['node', '--version'],
+    ['claude', 'mcp', 'remove', '--scope', 'user', 'chat-atlas'], ['claude', 'mcp', 'add', '--scope', 'user', 'chat-atlas', '--', 'node', launcher],
+    ['codex', 'mcp', 'remove', 'chat-atlas'], ['codex', 'mcp', 'add', 'chat-atlas', '--', 'node', launcher]
+  ]);
+  assert.equal(h.agentCalls[2].env.CLAUDE_CONFIG_DIR, path.join(h.root, 'claude'));
+  assert.equal(h.agentCalls[4].env.CODEX_HOME, path.join(h.root, 'codex'));
+  assert.match(h.messages.findLast(m => m.type === 'mcpRegistered').text, /registered with Claude Code and Codex/);
+  h.agentCalls.length = 0;
+  h.missAgent('codex');
+  await h.send({ type: 'registerMcp' });
+  assert.match(h.messages.findLast(m => m.type === 'mcpRegistered').text, /registered with Claude Code. Start/);
+  h.missAgent('node');
+  await h.send({ type: 'registerMcp' });
+  assert.match(h.messages.findLast(m => m.type === 'mcpRegistered').text, /Install Node.js/);
 });
