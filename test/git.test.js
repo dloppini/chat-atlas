@@ -71,7 +71,7 @@ test('Streamed previews still report late Git failures, timeouts and missing exe
   for (const failure of ['late','timeout','missing']) {
     const module = {exports:{}};
     require('node:vm').runInNewContext(source, {module,process,require:name => name === 'node:child_process' ? {
-      execFile: (command,args,options,callback) => callback(null,args.includes('--show-toplevel') ? '/fixture' : 'file.txt\0',''),
+      execFile: (command,args,options,callback) => callback(null,args.includes('--show-toplevel') ? '/fixture' : 'M\0file.txt\0',''),
       spawn: () => {
         const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
         process.nextTick(() => {
@@ -177,6 +177,10 @@ test('Git dashboard reads unborn repositories, topology, renames and working cha
   assert.match(untracked.patch, /\+new/);
   const committed = await readGitDiff(root, { mode: 'commit', commit: result.commits[0].hash });
   assert.ok(committed.files.includes('feature.txt')); assert.match(committed.patch, /\+feature/);
+  assert.deepEqual(staged.changes.find(change => change.file === 'new name.txt'), { code: 'R', file: 'new name.txt', original: 'old.txt' });
+  assert.deepEqual(working.changes, [{ code: 'M', file: 'feature.txt', original: '' }]);
+  assert.ok(untracked.changes.length && untracked.changes.every(change => change.code === '??'));
+  assert.deepEqual(committed.changes.map(change => change.code), committed.files.map(() => 'A'));
   const first = await readGitDiff(root, { mode: 'commit', commit: result.commits.at(-1).hash });
   assert.ok(first.files.includes('old.txt'));
   await assert.rejects(readGitDiff(root, { mode: 'working', file: '../outside.txt' }), /no longer/);

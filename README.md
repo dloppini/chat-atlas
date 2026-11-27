@@ -14,7 +14,7 @@ Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A**
 
 The published extension ID is `LPX.lpx-conversation-board`. Earlier packages used `local-tools.chat-atlas` or `lpx.chat-atlas`, separate extension identities with separate organization metadata. When switching, disable earlier installations to avoid duplicate commands. Existing transcripts are unaffected.
 
-The current local package is **chat-atlas-0.1.54.vsix**. Published installers are available from the [latest GitHub release](https://github.com/dloppini/chat-atlas/releases/latest). Use **Extensions → … → Install from VSIX…** to install a package.
+The current local package is **chat-atlas-0.1.55.vsix**. Published installers are available from the [latest GitHub release](https://github.com/dloppini/chat-atlas/releases/latest). Use **Extensions → … → Install from VSIX…** to install a package.
 
 Select a project and open **Engineering** to review its repository, explore local file dependencies, or trace the impact of a change. Choose **Refresh analysis** to capture a snapshot. **Chat Atlas: Select Project** opens the same project selection from the Command Palette. Agents can query the same evidence through a local MCP server; choose **Connect agents** in Engineering to register it with Claude Code and Codex. See the [Engineering Control Center guide](ENGINEERING-CONTROL-CENTER-SPEC.md) for setup, coverage and verification.
 
@@ -95,7 +95,7 @@ Stage or unstage the selected file from its diff toolbar, or use **Stage all / U
 
 For Azure DevOps Services repositories, **Create PR** opens the Azure PR creation form with the source branch selected. Push the branch first, then choose the target, title, description and reviewers in your authenticated browser and submit there. Azure HTTPS and SSH remotes are supported; choose the **PR remote** when more than one remote is configured. Self-hosted Azure DevOps Server is not detected.
 
-The graphical history connects commits to their parents and shows refs, authors, dates, and hashes. Select a commit to inspect its changed files. **All** shows staged, unstaged, and untracked files together in Local changes, with yellow **M** for modified files and green **N** for new files. Select **Unstaged**, **Staged**, or **Untracked** for a narrower comparison. Unified diffs include old/new line numbers and added/deleted line highlighting. Merge comparisons use the first parent. Text previews are limited to 512 KB. Binary content is identified without rendering.
+The graphical history connects commits to their parents and shows refs, authors, dates, and hashes. Select a commit to inspect its changed files. **All** shows staged, unstaged, and untracked files together in Local changes. Every changed file, in local changes and in commits, carries a status badge: yellow **M** modified, green **N** new, red **D** deleted, blue **R** renamed or copied, orange **U** unmerged. Changed files open as a folder tree with single-child folders merged into one row; collapse folders or choose **Tree** to switch to a flat list. Drag the edge of the changed-files pane, or the Commit, Author and Date column edges in the history, to resize them (arrow keys adjust, double-click resets); widths are remembered. Select **Unstaged**, **Staged**, or **Untracked** for a narrower comparison. Unified diffs include old/new line numbers and added/deleted line highlighting. Merge comparisons use the first parent. Text previews are limited to 512 KB. Binary content is identified without rendering.
 
 ### Pick up and hand off work
 

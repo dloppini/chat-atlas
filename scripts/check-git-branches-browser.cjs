@@ -5,7 +5,7 @@ async page => {
   await page.getByRole('button',{name:'Git',exact:true}).click();
   await page.waitForSelector('.git-patch');
   const select = () => page.getByRole('combobox',{name:'Branch',exact:true});
-  await page.getByRole('button',{name:'src/git.js',exact:true}).click();
+  await page.getByRole('button',{name:'src/git.js, Modified',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.git-file-heading h4')?.textContent==='src/git.js');
   await select().selectOption('refs/heads/feature/git-dashboard');
   await page.waitForFunction(()=>document.querySelectorAll('.git-commit').length===2);

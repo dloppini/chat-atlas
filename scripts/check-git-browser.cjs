@@ -23,7 +23,7 @@ async page => {
   await page.getByRole('spinbutton',{name:'Diff height in pixels'}).press('Tab');
   await page.getByRole('button',{name:'Add Git diff inspector',exact:false}).click();
   await page.waitForSelector('.git-patch');
-  await page.getByRole('button',{name:'src/git.js',exact:true}).click();
+  await page.getByRole('button',{name:'src/git.js, New',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.git-file-heading h4')?.textContent==='src/git.js');
   await page.evaluate(()=>{
     const request=window.atlasMessages.filter(m=>m.type==='gitDiff').at(-1);

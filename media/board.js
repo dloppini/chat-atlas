@@ -19,6 +19,12 @@ let gitDiffScroll = { file: '', top: 0, left: 0, list: 0 };
 let gitDocked = saved.gitDocked === true, gitDockHeight = Number.isFinite(saved.gitDockHeight) ? saved.gitDockHeight : 320, gitLive = false, gitWatchKey = null, gitDockDrag = null;
 const gitHeights = { tree: 300, diff: 640 };
 for (const key of Object.keys(gitHeights)) if (Number.isFinite(saved.gitHeights?.[key])) gitHeights[key] = Math.max(160, Math.min(1200, saved.gitHeights[key]));
+const gitWidthDefaults = { files: 240, hash: 62, author: 100, date: 80 };
+const gitWidthLimits = { files: [140, 640], hash: [48, 160], author: [60, 320], date: [60, 200] };
+const gitWidths = { ...gitWidthDefaults };
+for (const key of Object.keys(gitWidths)) if (Number.isFinite(saved.gitWidths?.[key])) gitWidths[key] = Math.max(gitWidthLimits[key][0], Math.min(gitWidthLimits[key][1], saved.gitWidths[key]));
+let gitFileTree = saved.gitFileTree !== false, gitWidthDrag = null;
+const gitCollapsed = new Set(Array.isArray(saved.gitCollapsed) ? saved.gitCollapsed.filter(path => typeof path === 'string') : []);
 const gitBranchFocus = saved.gitBranchFocus && typeof saved.gitBranchFocus === 'object' && !Array.isArray(saved.gitBranchFocus) ? saved.gitBranchFocus : {};
 let gitFocusPending = false;
 let gitOpen = false, gitProject = '', gitRequestId = 0, gitResult = null;
@@ -67,7 +73,7 @@ function showNotice(message) {
     window.scrollTo({ ...pageScroll, behavior: 'instant' });
   }, 15000);
 }
-const persist = () => host.setState({ engineeringOpen, engineeringView, engineeringPreferences: Object.fromEntries(engineeringPreferences), gitCommitDrafts:Object.fromEntries(gitCommitDrafts), gitAutoFit, gitHideHistory, gitWrap, gitDocked, gitDockHeight, themeMigrated, theme, gitBranchFocus, gitHeights, view, cardSort, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
+const persist = () => host.setState({ engineeringOpen, engineeringView, engineeringPreferences: Object.fromEntries(engineeringPreferences), gitCommitDrafts:Object.fromEntries(gitCommitDrafts), gitAutoFit, gitHideHistory, gitWrap, gitDocked, gitDockHeight, themeMigrated, theme, gitBranchFocus, gitHeights, gitWidths, gitFileTree, gitCollapsed: [...gitCollapsed].slice(-300), view, cardSort, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
 const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects, sidebarWidth, showSubfolders } }); };
 function sidebarBounds() { return { min: 180, max: Math.max(180, Math.min(520, window.innerWidth - 480)) }; }
 function applySidebarWidth() {
@@ -244,6 +250,34 @@ function gitDockHandle() {
   });
   return handle;
 }
+function applyGitWidths() {
+  for (const [key, width] of Object.entries(gitWidths)) $('git-dashboard').style.setProperty(`--git-${key}-width`, width + 'px');
+}
+// direction 1 widens the section when dragged right (a left-hand pane); -1 when dragged left (a column on the right).
+function gitWidthHandle(key, label, direction) {
+  const [min, max] = gitWidthLimits[key];
+  const handle = el('div', 'git-width-handle'); handle.tabIndex = 0;
+  handle.title = 'Drag to resize · Arrow keys adjust · Double-click resets';
+  handle.setAttribute('role', 'separator'); handle.setAttribute('aria-orientation', 'vertical'); handle.setAttribute('aria-label', `Resize ${label}`);
+  handle.setAttribute('aria-valuemin', String(min)); handle.setAttribute('aria-valuemax', String(max)); handle.setAttribute('aria-valuenow', String(gitWidths[key]));
+  const resize = width => {
+    gitWidths[key] = Math.round(Math.max(min, Math.min(max, width)));
+    applyGitWidths(); handle.setAttribute('aria-valuenow', String(gitWidths[key]));
+  };
+  handle.addEventListener('pointerdown', e => {
+    if (e.button) return;
+    e.preventDefault(); gitWidthDrag = { x: e.clientX, width: gitWidths[key] };
+    handle.setPointerCapture(e.pointerId); document.body.classList.add('git-resizing');
+  });
+  handle.addEventListener('pointermove', e => { if (gitWidthDrag) resize(gitWidthDrag.width + (e.clientX - gitWidthDrag.x) * direction); });
+  handle.addEventListener('lostpointercapture', () => { gitWidthDrag = null; document.body.classList.remove('git-resizing'); persist(); });
+  handle.addEventListener('dblclick', () => { resize(gitWidthDefaults[key]); persist(); });
+  handle.addEventListener('keydown', e => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault(); resize(gitWidths[key] + (e.key === 'ArrowRight' ? 1 : -1) * direction * (e.shiftKey ? 64 : 16)); persist();
+  });
+  return handle;
+}
 function toggleGitDock() {
   gitDocked = !gitDocked; persist();
   if (gitDocked && gitOpen) selectProjectView(false); else render();
@@ -335,6 +369,7 @@ function renderGit(rebuild = true) {
   else layoutActions.append(fit);
   layoutActions.append(focus, dock); repoHead.append(layoutActions); section.append(repoHead);
   for (const key of Object.keys(gitHeights)) section.style.setProperty('--git-' + key + '-height', gitHeights[key] + 'px');
+  applyGitWidths();
   const position = el('div', 'git-position');
   const current = el('strong', 'git-checkout', repo.head ? `Checked out: ${repo.branch} @ ${repo.head.slice(0,7)}` : `${repo.branch} | No commits yet`);
   position.append(current);
@@ -377,6 +412,12 @@ function renderGit(rebuild = true) {
   }
   // shortcut: six theme colors repeat for larger histories; ref names remain the identity.
   const rows = el('div', 'git-commit-rows');
+  const columns = el('div', 'git-commit-header');
+  columns.append(el('span', '', 'Description'));
+  for (const [key, label] of [['hash', 'Commit'], ['author', 'Author'], ['date', 'Date']]) {
+    const cell = el('span', 'git-column', label); cell.append(gitWidthHandle(key, label + ' column', -1)); columns.append(cell);
+  }
+  rows.append(columns);
   for (const {commit, color} of positions) {
     const row = button('', 'git-commit', () => selectGitDiff({mode:'commit', commit:commit.hash}));
     row.dataset.commit = commit.hash;
@@ -835,6 +876,31 @@ function selectGitDiff(selection) {
   const target = selection.mode === 'commit' ? [...document.querySelectorAll('.git-commit')].find(n => n.dataset.commit === selection.commit) : document.querySelector(`#git-inspector [data-diff-mode="${selection.mode}"]`);
   target?.focus({preventScroll:true});
 }
+// Flattens changed paths into tree rows like Fork: folders before files, single-child folder chains merged into one row.
+function gitTreeRows(files, collapsed) {
+  const root = { dirs: new Map(), files: [] };
+  for (const file of files) {
+    let node = root;
+    for (const part of file.split('/').slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+      node = node.dirs.get(part);
+    }
+    node.files.push(file);
+  }
+  const count = node => node.files.length + [...node.dirs.values()].reduce((sum, child) => sum + count(child), 0);
+  const rows = [];
+  const walk = (node, prefix, depth) => {
+    for (let [name, child] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+      while (child.dirs.size === 1 && !child.files.length) { const [[next, inner]] = child.dirs; name += '/' + next; child = inner; }
+      const path = prefix + name;
+      rows.push({ type: 'folder', path, name, depth, count: count(child) });
+      if (!collapsed.has(path)) walk(child, path + '/', depth + 1);
+    }
+    for (const file of [...node.files].sort((a, b) => a.localeCompare(b))) rows.push({ type: 'file', file, name: file.slice(file.lastIndexOf('/') + 1), depth });
+  };
+  walk(root, '', 0);
+  return rows;
+}
 function gitFileStatus(code) {
   if (/^(DD|AU|UD|UA|DU|AA|UU)$/.test(code)) return ['U', 'Unmerged'];
   if (code === '??' || code.includes('A')) return ['N', 'New'];
@@ -886,12 +952,25 @@ function renderGitDiff() {
   const diff = gitDiffResult.diff;
   if (!diff.files.length) { inspector.append(el('p','notice','No files changed in this comparison.')); return; }
   const pane = el('div','git-diff-layout'), files = el('nav','git-files');
-  files.append(el('div', 'git-files-heading', `Changed files (${diff.files.length})`)); files.setAttribute('aria-label','Changed files');
+  const filesHead = el('div', 'git-files-heading'); filesHead.append(el('span', '', `Changed files (${diff.files.length})`));
+  const treeToggle = button('Tree', 'quiet git-tree-toggle', () => { gitFileTree = !gitFileTree; persist(); renderGitDiff(); }, 'Show changed files as a folder tree');
+  treeToggle.setAttribute('aria-pressed', String(gitFileTree)); filesHead.append(treeToggle);
+  files.append(filesHead); files.setAttribute('aria-label','Changed files');
   const codes = new Map((diff.changes || []).map(({file, code}) => [file, code]));
-  for (const file of diff.files) {
+  const rows = gitFileTree ? gitTreeRows(diff.files, gitCollapsed) : diff.files.map(file => ({ type: 'file', file, name: file, depth: 0 }));
+  for (const row of rows) {
+    if (row.type === 'folder') {
+      const open = !gitCollapsed.has(row.path);
+      const folder = button('', 'git-folder', () => { if (open) gitCollapsed.add(row.path); else gitCollapsed.delete(row.path); persist(); renderGitDiff(); }, `${row.path}, ${row.count} changed file${row.count === 1 ? '' : 's'}`);
+      folder.dataset.diffFolder = row.path; folder.title = row.path; folder.setAttribute('aria-expanded', String(open));
+      folder.style.setProperty('--depth', row.depth);
+      folder.append(el('span', 'git-folder-chevron', open ? '▾' : '▸'), el('span', 'git-file-path', row.name), el('span', 'git-folder-count', String(row.count)));
+      files.append(folder); continue;
+    }
+    const file = row.file;
     const item = button('', file===diff.file?'active':'', () => selectGitDiff({...gitSelection,file}));
     const [letter, label] = gitFileStatus(codes.get(file) || '');
-    item.dataset.diffFile = file;
+    item.dataset.diffFile = file; item.style.setProperty('--depth', row.depth);
     item.title = label ? `${file} · ${label}` : file;
     item.setAttribute('aria-current',String(file===diff.file));
     if (letter) {
@@ -901,7 +980,7 @@ function renderGitDiff() {
       item.setAttribute('aria-label', `${file}, ${label}`);
       item.append(badge);
     }
-    item.append(el('span', 'git-file-path', file)); files.append(item);
+    item.append(el('span', 'git-file-path', row.name)); files.append(item);
   }
   const content = el('div','git-diff-content'), fileHead = el('div', 'git-file-heading');
   fileHead.append(el('h4','',diff.file));
@@ -938,14 +1017,17 @@ function renderGitDiff() {
   }
   const stats = el('span', 'git-diff-stats'); stats.setAttribute('aria-label', `${additions} added lines, ${deletions} deleted lines in preview`);
   stats.append(el('span', 'git-added-count', '+' + additions), el('span', 'git-removed-count', '-' + deletions)); fileHead.append(stats);
-  content.append(patch); pane.append(files,content); inspector.append(pane);
+  content.append(patch); pane.append(files, gitWidthHandle('files', 'changed files', 1), content); inspector.append(pane);
   // Live refreshes rebuild this pane; keep the reader's place in the same file.
   if (gitDiffScroll.file === diff.file) { content.scrollTop = gitDiffScroll.top; content.scrollLeft = gitDiffScroll.left; files.scrollTop = gitDiffScroll.list; }
   else gitDiffScroll = { file: diff.file, top: 0, left: 0, list: 0 };
   content.addEventListener('scroll', () => { gitDiffScroll.top = content.scrollTop; gitDiffScroll.left = content.scrollLeft; }, { passive: true });
   files.addEventListener('scroll', () => { gitDiffScroll.list = files.scrollTop; }, { passive: true });
   const focusFile = focused?.dataset.diffFile || (focused?.dataset.diffMode === gitSelection.mode && gitSelection.file);
-  const nextFocus = focusFile ? [...files.querySelectorAll('button')].find(item => item.dataset.diffFile === focusFile)
+  const nextFocus = focused?.dataset.diffFolder ? [...files.querySelectorAll('.git-folder')].find(item => item.dataset.diffFolder === focused.dataset.diffFolder)
+    : focused?.classList.contains('git-tree-toggle') ? files.querySelector('.git-tree-toggle')
+    : focused?.classList.contains('git-width-handle') ? pane.querySelector('.git-width-handle')
+    : focusFile ? [...files.querySelectorAll('button')].find(item => item.dataset.diffFile === focusFile)
     : focused && !focused.dataset.diffMode && [...inspector.querySelectorAll('button')].find(item => item.textContent === focused.textContent);
   if (nextFocus) nextFocus.focus({preventScroll:true});
 }
@@ -1375,7 +1457,7 @@ window.addEventListener('message', e => {
       requestGit(false); renderGit();
     } else renderGit();
   }
-  if (m.type === 'gitChanged' && m.projectKey === project && m.projectKey === gitWatchKey && !gitOperation && !gitDockDrag) requestGit(false, true);
+  if (m.type === 'gitChanged' && m.projectKey === project && m.projectKey === gitWatchKey && !gitOperation && !gitDockDrag && !gitWidthDrag) requestGit(false, true);
   if (m.type === 'gitDiff' && m.projectKey === project && m.requestId === gitDiffId) {
     const same = gitDiffResult && JSON.stringify(gitDiffResult.diff) === JSON.stringify(m.diff) && gitDiffResult.error === m.error;
     gitDiffResult = m; if (!same) renderGitDiff();

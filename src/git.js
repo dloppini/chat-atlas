@@ -111,6 +111,17 @@ function parseGitChanges(status) {
   }
   return changes;
 }
+// `--name-status -z` rows: a status token (R and C carry a score, then the original path), then the path.
+function parseNameStatus(output) {
+  const parts = output.split('\0'), changes = [];
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i][0];
+    if (!code) continue;
+    const original = code === 'R' || code === 'C' ? parts[++i] : '';
+    changes.push({ code, file: parts[++i], original });
+  }
+  return changes;
+}
 async function readGitDiff(cwd, selection) {
   const root = (await run(cwd, ['rev-parse', '--show-toplevel'])).trim();
   const { mode, commit, file } = selection;
@@ -123,15 +134,16 @@ async function readGitDiff(cwd, selection) {
     mode === 'all' ? run(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(value => value.trim()).catch(error => { if (error.code === 1) return ''; throw error; }) : ''
   ]);
   const changes = status === null ? null : parseGitChanges(status);
-  const names = changes ? changes.map(change => change.file) : (await run(root, mode === 'untracked'
-    ? ['ls-files', '--others', '--exclude-standard', '-z']
-    : [...base, '--name-only', '-z'])).split('\0').filter(Boolean);
-  const files = [...new Set(names)];
+  // Every comparison reports a status per file, so new, modified and deleted files stay distinguishable in commits too.
+  const listed = changes || (mode === 'untracked'
+    ? (await run(root, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean).map(name => ({ code: '??', file: name, original: '' }))
+    : parseNameStatus(await run(root, [...base, '--name-status', '-z'])));
+  const files = [...new Set(listed.map(change => change.file))];
   if (file !== undefined && !files.includes(file)) throw new Error('This file is no longer in the comparison. Refresh and select it again.');
   const selected = file === undefined ? files[0] : file;
   const change = changes?.findLast(item => item.file === selected);
   const head = change && change.code !== '??' ? headLookup : '';
-  const comparison = { files, file: selected || '', ...(changes && { changes }) };
+  const comparison = { files, file: selected || '', changes: listed };
   let patch = '';
   if (selected && (mode === 'untracked' || change?.code === '??' || (!head && change?.code[0] === 'A' && change.code[1] !== 'D'))) {
     const fs = require('node:fs/promises'), path = require('node:path');

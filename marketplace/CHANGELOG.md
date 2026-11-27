@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.55 - 27 November 2026
+
+- Browse changed files as a folder tree, like Fork: folders come first, single-child folders merge into one row, and collapsed folders stay collapsed. **Tree** switches back to a flat list.
+- See whether each changed file is new, modified, deleted or renamed everywhere, including when inspecting a commit: **N**, **M**, **D** and **R** badges now appear for commits, Unstaged, Staged and Untracked, not only in All.
+- Resize the Git view: drag the edge of the changed-files pane or the Commit, Author and Date column edges in the history. Arrow keys adjust, double-click resets, and widths are remembered.
+
 ## 0.1.54 - 27 November 2026
 
 - Find chats with a running task in **Project pickup**, listed first under **Running**, even when they are not marked In progress or Waiting.

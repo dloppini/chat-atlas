@@ -22,3 +22,13 @@ test('Git graph keeps first-parent colors and separates merged paths without lan
   assert.equal(maxLanes, 2);
   assert.equal(layout([]).positions.length, 0);
 });
+
+test('Changed files tree lists folders first, merges single-child chains and hides collapsed folders', () => {
+  const treeSource = source.slice(source.indexOf('function gitTreeRows('), source.indexOf('function gitFileStatus('));
+  const rows = vm.runInNewContext(treeSource + '; gitTreeRows');
+  const files = ['README.md', 'src/engineering/graph/layout.js', 'src/engineering/graph/edges.js', 'src/git.js', 'media/board.js'];
+  const shape = list => [...list].map(row => `${row.depth}:${row.type === 'folder' ? row.name + '/' + row.count : row.name}`);
+  assert.deepEqual(shape(rows(files, new Set())), ['0:media/1', '1:board.js', '0:src/3', '1:engineering/graph/2', '2:edges.js', '2:layout.js', '1:git.js', '0:README.md']);
+  assert.deepEqual(shape(rows(files, new Set(['src/engineering/graph']))), ['0:media/1', '1:board.js', '0:src/3', '1:engineering/graph/2', '1:git.js', '0:README.md']);
+  assert.equal(rows(files, new Set()).find(row => row.name === 'layout.js').file, 'src/engineering/graph/layout.js');
+});

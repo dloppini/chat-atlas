@@ -41,10 +41,11 @@ window.atlasPreview={getState:()=>JSON.parse(localStorage.getItem('atlasDemoUi')
   if(m.type==='gitDashboard')setTimeout(()=>window.postMessage({type:'gitDashboard',projectKey:m.projectKey,requestId:m.requestId,dashboard:demoGitDashboard({"root": "Demo repository (fictional)", "branch": "main", "branches": "* main\\n  feature/git-dashboard\\n  remotes/origin/main", "changes": [{"code": " M", "file": "media/board.js"}], "commits": [{"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "parents": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccc"], "subject": "Merge repository browser", "author": "Demo author", "date": "2026-11-14T10:00:00Z", "refs": "HEAD -> main"}, {"hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "parents": ["dddddddddddddddddddddddddddddddddddddddd"], "subject": "Improve conversation navigation", "author": "Demo author", "date": "2026-11-14T10:00:00Z", "refs": ""}, {"hash": "cccccccccccccccccccccccccccccccccccccccc", "parents": ["dddddddddddddddddddddddddddddddddddddddd"], "subject": "Add Git diff inspector", "author": "Demo author", "date": "2026-11-14T10:00:00Z", "refs": "feature/git-dashboard"}, {"hash": "dddddddddddddddddddddddddddddddddddddddd", "parents": [], "subject": "Initial project", "author": "Demo author", "date": "2026-11-14T10:00:00Z", "refs": ""}]},m.focusRef)}),80);
   if(m.type==='gitDiff'){
     const changes=demoChanges.filter(c=>m.mode==='all'||(m.mode==='staged'?c.code[0]!==' '&&c.code[0]!=='?':m.mode==='untracked'?c.code==='??':c.code[1]!==' '&&c.code!=='??'));
-    const files=m.mode==='commit'?['media/board.js','src/git.js']:changes.map(c=>c.file);
+    const listed=m.mode==='commit'?[{code:'M',file:'media/board.js'},{code:'A',file:'src/git.js'},{code:'D',file:'media/old-panel.css'},{code:'M',file:'src/engineering/graph/layout.js'},{code:'R',file:'src/engineering/graph/edges.js',original:'src/engineering/edges.js'}]:changes;
+    const files=listed.map(c=>c.file);
     const file=m.file||files[0]||'';
     const patch=changes.find(c=>c.file===file)?.code==='??'?'@@ New untracked file @@\\n+New notes':'@@ -1,3 +1,4 @@\\n const view = true;\\n-old line\\n+new line\\n+one more line\\n context';
-    setTimeout(()=>window.postMessage({type:'gitDiff',projectKey:m.projectKey,requestId:m.requestId,diff:{files,file,changes:m.mode==='all'?changes:undefined,patch,truncated:false}}),80);
+    setTimeout(()=>window.postMessage({type:'gitDiff',projectKey:m.projectKey,requestId:m.requestId,diff:{files,file,changes:listed,patch,truncated:false}}),80);
   }
   if(m.type==='newChat')window.postMessage({type:'notice',text:'Demo preview: a new '+m.provider+' chat would open in the selected project folder.'});
   if(m.type==='renameProject'){

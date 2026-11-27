@@ -47,7 +47,7 @@ async page => {
   await page.getByRole('spinbutton',{name:'Diff height in pixels'}).fill('720');await page.keyboard.press('Tab');
   if(await page.locator('.git-diff-layout').evaluate(n=>n.getBoundingClientRect().height)!==720)throw Error('Manual sizing failed');
   await page.getByRole('button',{name:'Fit window',exact:true}).click();
-  await page.getByRole('button',{name:'src/git.js',exact:true}).click();
+  await page.getByRole('button',{name:'src/git.js, Modified',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.git-file-heading h4')?.textContent==='src/git.js');
   await page.getByRole('combobox',{name:'Branch',exact:true}).selectOption('refs/heads/feature/git-dashboard');
   await page.waitForFunction(()=>document.querySelectorAll('.git-commit').length===2);
