@@ -67,6 +67,6 @@ Released under the MIT license included in LICENSE.txt.
 ### Pick up and hand off work
 
 - Right-click a local file in Explorer and choose **Chat Atlas: Find Chats for This File**. Select a result to resume the chat. Recorded edit and read actions appear before path mentions.
-- Open a project and choose **Project pickup** for In progress and Waiting chats. Edit the next step in the chat’s handoff note.
+- Open a project and choose **Project pickup** for chats with a running task and those marked In progress or Waiting. Edit the next step in the chat’s handoff note.
 - Search the board and choose **Passages** on a result, or use **Find passage…** in Details. Pick a message to open the match and the messages on either side in an editor.
 - In Details, choose **Hand off…**, select an excerpt or write a decision, choose file paths, and enter the next step. Review the preview, then **Copy and open chat**. Paste into the new provider draft and send. Atlas links the chats in Details when it indexes the opening message with the source line.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.54 - 27 November 2026
+
+- Find chats with a running task in **Project pickup**, listed first under **Running**, even when they are not marked In progress or Waiting.
+
 ## 0.1.53 - 27 November 2026
 
 - See when each conversation was last active: every card shows **Active 3h ago** (a date after 30 days), next to the created date outside Timeline.

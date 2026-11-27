@@ -1259,9 +1259,10 @@ $('handoff-form').addEventListener('submit', e => {
 $('handoff-close').addEventListener('click', () => $('handoff-dialog').close());
 $('pickup').addEventListener('click', () => {
   const list = $('pickup-list'); list.replaceChildren();
-  const sessions = data.sessions.filter(s => projectGroupKey(s) === project && ['In progress','Waiting'].includes(s.status));
-  for (const status of ['In progress','Waiting']) {
-    const group = sessions.filter(s => s.status === status);
+  // A chat with a running task belongs here whatever its board status; it is listed once, under Running.
+  const sessions = data.sessions.filter(s => projectGroupKey(s) === project && (s.running || ['In progress','Waiting'].includes(s.status)));
+  for (const status of ['Running','In progress','Waiting']) {
+    const group = sessions.filter(s => status === 'Running' ? s.running : !s.running && s.status === status);
     if (!group.length) continue;
     list.append(el('h3','',status));
     for (const s of group) {
@@ -1270,7 +1271,7 @@ $('pickup').addEventListener('click', () => {
       list.append(item);
     }
   }
-  if (!sessions.length) list.append(el('p','','Chats marked In progress or Waiting will appear here.'));
+  if (!sessions.length) list.append(el('p','','Chats with a running task, or marked In progress or Waiting, will appear here.'));
   $('pickup-dialog').showModal();
 });
 $('pickup-close').addEventListener('click', () => $('pickup-dialog').close());

@@ -14,7 +14,7 @@ Run **Chat Atlas: Open Board** from the Command Palette, or press **Ctrl+Alt+A**
 
 The published extension ID is `LPX.lpx-conversation-board`. Earlier packages used `local-tools.chat-atlas` or `lpx.chat-atlas`, separate extension identities with separate organization metadata. When switching, disable earlier installations to avoid duplicate commands. Existing transcripts are unaffected.
 
-The current local package is **chat-atlas-0.1.53.vsix**. Published installers are available from the [latest GitHub release](https://github.com/dloppini/chat-atlas/releases/latest). Use **Extensions → … → Install from VSIX…** to install a package.
+The current local package is **chat-atlas-0.1.54.vsix**. Published installers are available from the [latest GitHub release](https://github.com/dloppini/chat-atlas/releases/latest). Use **Extensions → … → Install from VSIX…** to install a package.
 
 Select a project and open **Engineering** to review its repository, explore local file dependencies, or trace the impact of a change. Choose **Refresh analysis** to capture a snapshot. **Chat Atlas: Select Project** opens the same project selection from the Command Palette. Agents can query the same evidence through a local MCP server; choose **Connect agents** in Engineering to register it with Claude Code and Codex. See the [Engineering Control Center guide](ENGINEERING-CONTROL-CENTER-SPEC.md) for setup, coverage and verification.
 
@@ -100,6 +100,6 @@ The graphical history connects commits to their parents and shows refs, authors,
 ### Pick up and hand off work
 
 - Right-click a local file in Explorer and choose **Chat Atlas: Find Chats for This File**. Select a result to resume the chat. Recorded edit and read actions appear before path mentions.
-- Open a project and choose **Project pickup** for In progress and Waiting chats. Edit the next step in the chat’s handoff note.
+- Open a project and choose **Project pickup** for chats with a running task and those marked In progress or Waiting. Edit the next step in the chat’s handoff note.
 - Search the board and choose **Passages** on a result, or use **Find passage…** in Details. Pick a message to open the match and the messages on either side in an editor.
 - In Details, choose **Hand off…**, select an excerpt or write a decision, choose file paths, and enter the next step. Review the preview, then **Copy and open chat**. Paste into the new provider draft and send. Atlas links the chats in Details when it indexes the opening message with the source line.
