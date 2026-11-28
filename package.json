@@ -2,7 +2,7 @@
   "name": "lpx-conversation-board",
   "displayName": "Chat Atlas by LPX",
   "description": "A local conversation organizer with project filters, topic boards, workflow status, and a timeline.",
-  "version": "0.1.55",
+  "version": "0.1.58",
   "publisher": "lpx",
   "author": {
     "name": "LPX"
@@ -170,6 +170,28 @@
           "maximum": 1440,
           "description": "Hide the running indicator after this many minutes without task activity. Increase it for long tools or builds. Completion and interruption records stop the indicator immediately."
         },
+        "chatAtlas.notifications": {
+          "type": "string",
+          "enum": [
+            "off",
+            "questions",
+            "all"
+          ],
+          "default": "questions",
+          "scope": "application",
+          "enumItemLabels": [
+            "Off",
+            "Questions only",
+            "Questions and finished tasks"
+          ],
+          "description": "Show a VS Code notification with an Open chat action when a Codex or Claude Code chat asks you a question, or also when a running task finishes. Detected from local transcripts; permission prompts are not recorded there."
+        },
+        "chatAtlas.checkBehindMain": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Fetch each linked project's remote (origin, or its only remote) at most every 10 minutes while Chat Atlas refreshes, and notify when the current branch is behind the remote main branch. Fetching only updates remote-tracking branches; your working files and branches are not changed."
+        },
         "chatAtlas.claudeTileAction": {
           "type": "string",
           "enum": [
@@ -179,6 +201,120 @@
           "default": "chatWindow",
           "scope": "application",
           "markdownDescription": "Where a Claude conversation opens when you select its title, and where new Claude chats and handoffs start.\n\nStart a new chat in the selected project with `Ctrl+N` (macOS: `Cmd+N`) while the board is focused. [Review or change the shortcut](command:chatAtlas.changeNewChatShortcut)."
+        },
+        "chatAtlas.modelPricing": {
+          "type": "object",
+          "scope": "application",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number"
+              },
+              "output": {
+                "type": "number"
+              },
+              "cacheWrite": {
+                "type": "number"
+              },
+              "cacheRead": {
+                "type": "number"
+              }
+            }
+          },
+          "markdownDescription": "USD per million tokens by model ID, used for the estimated API-equivalent cost in **Usage**. A key matches the longest model-ID prefix, so `claude-opus-5-5` also covers dated snapshots. Models without an entry show no cost. Subscription plans (Claude Max, ChatGPT) are not billed per token; the estimate shows what the same work would cost on the API.",
+          "default": {
+            "claude-fable-5-2": {
+              "input": 8,
+              "output": 40,
+              "cacheWrite": 10,
+              "cacheRead": 0.2
+            },
+            "claude-fable-5-1": {
+              "input": 10,
+              "output": 50,
+              "cacheWrite": 12.5,
+              "cacheRead": 1.0
+            },
+            "claude-fable-5": {
+              "input": 10,
+              "output": 50,
+              "cacheWrite": 12.5,
+              "cacheRead": 1.0
+            },
+            "claude-opus-5-5": {
+              "input": 4,
+              "output": 20,
+              "cacheWrite": 5,
+              "cacheRead": 0.2
+            },
+            "claude-opus-5": {
+              "input": 5,
+              "output": 25,
+              "cacheWrite": 6.25,
+              "cacheRead": 0.5
+            },
+            "claude-opus-4-8": {
+              "input": 5,
+              "output": 25,
+              "cacheWrite": 6.25,
+              "cacheRead": 0.5
+            },
+            "claude-opus-4-7": {
+              "input": 5,
+              "output": 25,
+              "cacheWrite": 6.25,
+              "cacheRead": 0.5
+            },
+            "claude-opus-4-6": {
+              "input": 5,
+              "output": 25,
+              "cacheWrite": 6.25,
+              "cacheRead": 0.5
+            },
+            "claude-opus-4-5": {
+              "input": 5,
+              "output": 25,
+              "cacheWrite": 6.25,
+              "cacheRead": 0.5
+            },
+            "claude-sonnet-5-5": {
+              "input": 2,
+              "output": 10,
+              "cacheWrite": 2.5,
+              "cacheRead": 0.1
+            },
+            "claude-sonnet-5": {
+              "input": 2,
+              "output": 10,
+              "cacheWrite": 2.5,
+              "cacheRead": 0.2
+            },
+            "claude-sonnet-4-6": {
+              "input": 3,
+              "output": 15,
+              "cacheWrite": 3.75,
+              "cacheRead": 0.3
+            },
+            "claude-sonnet-4-5": {
+              "input": 3,
+              "output": 15,
+              "cacheWrite": 3.75,
+              "cacheRead": 0.3
+            },
+            "claude-haiku-5-5": {
+              "input": 0.1,
+              "output": 0.5,
+              "cacheWrite": 0.125,
+              "cacheRead": 0.01
+            },
+            "claude-haiku-4-5": {
+              "input": 1,
+              "output": 5,
+              "cacheWrite": 1.25,
+              "cacheRead": 0.1
+            }
+          }
         }
       }
     },

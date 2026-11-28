@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { classify, parseSession, reconcile, SessionIndex, sample, publicSessions } = require('../src/core');
 const { openNativeSession, openNewProjectChat } = require('../src/providers');
-const { activityAge, canonicalProjectPath, originalProjectKey, projectGroupKey, projectCatalog, linkProjectFolder, remapProjectKeys, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject } = require('../media/projects');
+const { usagePrice, usageCost, formatTokens, activityAge, canonicalProjectPath, originalProjectKey, projectGroupKey, projectCatalog, linkProjectFolder, remapProjectKeys, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject } = require('../media/projects');
 const id = '12345678-1234-1234-1234-123456789abc';
 const meta = { type: 'session_meta', payload: { id, cwd: 'C:/Code/example', timestamp: '2026-10-01T12:00:00Z' } };
 const prompt = text => ({ type: 'response_item', timestamp: '2026-10-01T12:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
@@ -457,4 +457,37 @@ test('activityAge gives compact relative labels and falls back to a date after 3
   assert.equal(activityAge(now - 3 * 3600e3, now), '3h ago');
   assert.equal(activityAge(now - 2 * 86400e3, now), '2d ago');
   assert.doesNotMatch(activityAge(now - 40 * 86400e3, now), /ago/);
+});
+
+test('Token usage counts each Claude message once, derives Codex turns from cumulative totals and keeps the latest rate limits', () => {
+  const usage = (id, output, model = 'claude-fable-5-1') => ({ type: 'assistant', sessionId: id.length === 36 ? id : undefined, timestamp: '2026-10-01T12:05:00Z', message: { id: 'msg_' + id, model, usage: { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: output }, content: [{ type: 'text', text: 'ok' }] } });
+  const claude = parseSession('claude', `${id}.jsonl`, [{ type: 'user', sessionId: id, cwd: '/code/demo', timestamp: '2026-10-01T12:00:00Z', message: { content: 'Count tokens' } },
+    usage('a', 5), usage('a', 50), usage('b', 7, 'claude-opus-5-5'), { ...usage('c', 1), timestamp: '2026-10-02T09:00:00Z' }], stat);
+  assert.deepEqual(claude.usage.days.map(d => [d.day, d.model, d.input, d.cacheWrite, d.cacheRead, d.output]).sort(),
+    [['2026-10-01', 'claude-fable-5-1', 10, 100, 1000, 50], ['2026-10-01', 'claude-opus-5-5', 10, 100, 1000, 7], ['2026-10-02', 'claude-fable-5-1', 10, 100, 1000, 1]]);
+  assert.equal(claude.usage.model, 'claude-fable-5-1');
+  const count = (total, last, extra = {}) => ({ type: 'event_msg', timestamp: '2026-10-01T12:02:00Z', payload: { type: 'token_count', info: total ? { total_token_usage: total, last_token_usage: last } : { last_token_usage: last }, ...extra } });
+  const t1 = { input_tokens: 500, cached_input_tokens: 400, cache_write_input_tokens: 0, output_tokens: 20, total_tokens: 520 };
+  const t2 = { input_tokens: 1100, cached_input_tokens: 950, cache_write_input_tokens: 0, output_tokens: 45, total_tokens: 1145 };
+  const limits = { rate_limits: { plan_type: 'plus', primary: { used_percent: 40, window_minutes: 300, resets_at: 1800000000 }, secondary: null, credits: { balance: '12.5' } } };
+  const codex = parseSession('codex', `${id}.jsonl`, [meta, { type: 'turn_context', payload: { model: 'gpt-6.1-terra' } }, prompt('Count'), count(t1, t1), count(t1, t1), count(t2, null, limits),
+    count(null, { input_tokens: 30, cached_input_tokens: 0, output_tokens: 3, total_tokens: 33 })], stat);
+  assert.deepEqual(codex.usage.days, [{ day: '2026-10-01', model: 'gpt-6.1-terra', input: 150 + 30, cacheRead: 950, cacheWrite: 0, output: 48 }]);
+  assert.equal(codex.usage.limits.plan, 'plus'); assert.equal(codex.usage.limits.credits, '12.5'); assert.equal(codex.usage.limits.primary.used_percent, 40);
+  assert.equal(parseSession('codex', `${id}.jsonl`, [meta, prompt('No usage')], stat).usage, undefined);
+  const price = usagePrice('claude-opus-5-5-20260401', { 'claude-opus-5': { input: 5, output: 25 }, 'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2 } });
+  assert.equal(price.input, 4);
+  assert.equal(usageCost({ input: 1e6, output: 1e6, cacheRead: 10e6, cacheWrite: 0 }, price), 26);
+  assert.equal(usageCost({ input: 1 }, usagePrice('gpt-6.1-terra', {})), null);
+  assert.deepEqual([999, 1200, 2_400_000, 12_000_000].map(formatTokens), ['999', '1k', '2.4M', '12M']);
+});
+
+test('Claude AI titles rank above compaction summaries, and cost-state supplies lines changed and the reported cost', () => {
+  const records = [{ type: 'user', sessionId: id, cwd: '/code/demo', timestamp: '2026-10-01T12:00:00Z', message: { content: 'Build the importer' } },
+    { type: 'summary', summary: 'Importer work summary' }, { type: 'ai-title', aiTitle: 'Importer validation' },
+    { type: 'cost-state', sessionId: id, totalCostUSD: 1.25, totalLinesAdded: 40, totalLinesRemoved: 3, modelUsage: {} }];
+  const s = parseSession('claude', `${id}.jsonl`, records, stat);
+  assert.equal(s.title, 'Importer validation');
+  assert.deepEqual([s.usage.reportedCost, s.usage.linesAdded, s.usage.linesRemoved, s.usage.days], [1.25, 40, 3, []]);
+  assert.equal(parseSession('claude', `${id}.jsonl`, [records[0], records[1], { type: 'custom-title', customTitle: 'My title' }, records[2]], stat).title, 'My title');
 });

@@ -14,6 +14,7 @@ const config = /(?:^|\/)(?:[jt]sconfig\.json|package\.json)$/i;
 const maxFiles = 4500;
 const maxEdges = 18000;
 const maxBytes = 24 * 1024 * 1024;
+const maxFileBytes = 4 * 1024 * 1024;
 const testFile = { test: file => /(?:^|\/)(?:tests?|__tests__|spec|testthat)\/|[._-](?:spec|test)s?\.\w+$|(?:^|\/)test[_-][^/]+$/i.test(file) || /[a-z\d](?:Tests?|Spec)\.\w+$|(?:^|\/)test[A-Z]\w*\.m$/.test(file) };
 const moduleName = file => file.includes('/') ? file.split('/')[0] : '(root)';
 const folderOf = file => file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '(root)';
@@ -53,7 +54,7 @@ async function indexFiles(repo, ts, signal) {
       if (!item) { skipped++; continue; }
       // Large C sources are converted images, fonts and audio; list them without reading their data.
       if (cSource.test(item.file) && item.size > 128 * 1024) { generated.add(item.file); continue; }
-      if (item.size > 512 * 1024 || bytes + item.size > maxBytes) { skipped++; continue; }
+      if (item.size > maxFileBytes || bytes + item.size > maxBytes) { skipped++; continue; }
       bytes += item.size;
       wanted.push(item);
     }

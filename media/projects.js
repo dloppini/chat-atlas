@@ -122,4 +122,22 @@ function activityAge(ms, now = Date.now()) {
   const days = Math.floor(hours / 24);
   return days < 30 ? `${days}d ago` : new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
-if (typeof module !== 'undefined') module.exports = { activityAge, canonicalProjectPath, originalProjectKey, projectGroupKey, remapProjectKeys, linkProjectFolder, reconnectProjectFolder, projectCatalog, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject };
+// Token usage helpers shared by the parser, the status bar and the board.
+function usageDay(ms) {
+  const d = new Date(ms), pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function formatTokens(n) {
+  return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n));
+}
+// Longest configured model-ID prefix wins, so one entry covers dated snapshots of the same model.
+function usagePrice(model, pricing) {
+  const key = Object.keys(pricing || {}).filter(k => k && typeof model === 'string' && model.startsWith(k)).sort((a, b) => b.length - a.length)[0];
+  const price = key && pricing[key];
+  return price && typeof price === 'object' ? price : null;
+}
+function usageCost(entry, price) {
+  if (!price) return null;
+  return ((entry.input || 0) * (price.input || 0) + (entry.output || 0) * (price.output || 0) + (entry.cacheRead || 0) * (price.cacheRead || 0) + (entry.cacheWrite || 0) * (price.cacheWrite || 0)) / 1e6;
+}
+if (typeof module !== 'undefined') module.exports = { usageDay, formatTokens, usagePrice, usageCost, activityAge, canonicalProjectPath, originalProjectKey, projectGroupKey, remapProjectKeys, linkProjectFolder, reconnectProjectFolder, projectCatalog, effectiveSubfolder, groupSubfolders, groupProjects, resolveProjectSelection, orderedProjects, moveProject };

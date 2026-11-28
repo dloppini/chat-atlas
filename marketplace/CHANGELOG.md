@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.58 - 28 November 2026
+
+- Count uncommitted work at a glance: the project sidebar shows how many files are new, modified and deleted next to each colored dot, matching the Git view.
+- Know when to pull: a down arrow in the sidebar counts commits on the remote main branch that your current branch lacks, on main or a feature branch, and a notification with **Open Git** appears when a project falls behind. Chat Atlas fetches the remote at most every 10 minutes while the board refreshes; **Settings → Chat Atlas → Check Behind Main** turns this off.
+- Map and measure large source files: the engineering analyzer now reads files up to 4 MB, up from 512 KB, so generated or bundled components such as a 2 MB dashboard appear in the graph and Quality view. The 24 MB total input cap is unchanged.
+
+## 0.1.57 - 28 November 2026
+
+- Know when an agent needs you without opening every chat: cards show **Asks you** when Codex or Claude Code asked a question and is waiting for your answer, and **Finished** when a task completed since you last opened the chat. The heading counts them, and **Project pickup** lists them first. Permission prompts are not written to transcripts and are not detected.
+- Get a VS Code notification with **Open chat** when a chat asks you a question. **Settings → Chat Atlas → Notifications** switches it off or extends it to finished tasks.
+- See Claude Code's own session titles on cards when no custom title is set, and in Details the lines added and removed and the cost Claude Code recorded for the session.
+- Search finds only chats that contain the words you type, at the start of words in their messages, title or note, so `test` still finds "tests": `3D` no longer matches commit hashes or colours such as `3dd2f`, nor every chat in a project or topic whose name matches. **Last match** on a result opens the last message containing the words, highlighted, with the exchange around it; **Find passage…** lists matches newest first.
+
+## 0.1.56 - 27 November 2026
+
+- See token usage and estimated cost in the new **Usage** view: tokens by day, model, project and conversation, read from the Codex and Claude Code transcripts you already have. Choose 7 days, 30 days or all time, and narrow to a project. **Codex plan** shows the 5-hour and weekly limits, reset times and credits that Codex reports. Conversation details show tokens, cache share, model and cost; the status bar shows today's total.
+- Set per-model prices in **Settings → Chat Atlas → Model Pricing**. Claude models are preconfigured; unpriced models show no cost and mark totals with `+`.
+- Spot projects with uncommitted work from the sidebar: green, orange and red dots beside a project mean new, modified and deleted files in its repository.
+
 ## 0.1.55 - 27 November 2026
 
 - Browse changed files as a folder tree, like Fork: folders come first, single-child folders merge into one row, and collapsed folders stay collapsed. **Tree** switches back to a flat list.

@@ -34,7 +34,7 @@ async page => {
   await page.evaluate(()=>document.body.classList.remove('vscode-high-contrast'));
   await page.evaluate(theme => window.dispatchEvent(new MessageEvent('message', {data: {type: 'theme', theme}})), 'pearl');
   await page.locator('#conversation-switch').focus();
-  for (const id of ['git-switch', 'engineering-switch', 'new-chat', 'settings', 'feedback', 'refresh']) {
+  for (const id of ['git-switch', 'engineering-switch', 'usage-switch', 'new-chat', 'settings', 'feedback', 'refresh']) {
     await page.keyboard.press('Tab');
     if (await page.evaluate(() => document.activeElement.id) !== id) throw Error('Header focus order: ' + id);
   }

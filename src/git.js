@@ -264,4 +264,26 @@ async function readEngineeringGit(cwd, signal) {
   return { root, commonDir: commonDir.trimEnd(), worktree: worktree.trimEnd(), branch: branch.trim(), head, date, subject, counts,
     statusFingerprint: createHash('sha256').update(status).digest('hex') };
 }
-module.exports = { readGitDashboard, readGitDiff, runGitOperation, azureRepositoryUrl, readEngineeringGit, readOnlyGit };
+// One porcelain code per changed file, as the Git view lists them, so the sidebar can count new/modified/deleted. null when not a repository.
+async function readGitStatusCodes(cwd) {
+  const status = await readOnlyGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all']).catch(() => null);
+  return status === null ? null : parseGitChanges(status).map(change => change.code);
+}
+// Commits on the remote main branch (origin/HEAD, else main or master) that HEAD lacks. Fetching only updates remote-tracking refs. null without a remote main.
+async function readBehindMain(cwd, fetch) {
+  try {
+    const root = (await run(cwd, ['rev-parse', '--show-toplevel'])).trim();
+    const remotes = (await run(root, ['remote'])).split(/\r?\n/).filter(Boolean);
+    const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+    if (!remote) return null;
+    if (fetch && !operations.has(root)) await run(root, ['fetch', '--quiet', '--no-tags', '--', remote], 60000).catch(() => {});
+    let base = (await run(root, ['symbolic-ref', '--quiet', '--short', `refs/remotes/${remote}/HEAD`]).catch(() => '')).trim();
+    for (const name of base ? [] : ['main', 'master']) {
+      if (await run(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${name}`]).then(() => true, () => false)) { base = `${remote}/${name}`; break; }
+    }
+    if (!base) return null;
+    const [count, hash] = await Promise.all([run(root, ['rev-list', '--count', `HEAD..refs/remotes/${base}`]), run(root, ['rev-parse', `refs/remotes/${base}`])]);
+    return { base, behind: Number(count.trim()), hash: hash.trim() };
+  } catch { return null; }
+}
+module.exports = { readGitDashboard, readGitDiff, runGitOperation, azureRepositoryUrl, readEngineeringGit, readOnlyGit, readGitStatusCodes, readBehindMain };

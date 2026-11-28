@@ -25,7 +25,9 @@ test('Batch status persists only known selected cards and maintains completion t
 
 async function extensionHarness(t, stored = {}, sessions = []) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-folder-test-'));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  // Background status reads stop at the temp folder instead of a home-directory repository; retries cover a git process still exiting.
+  process.env.GIT_CEILING_DIRECTORIES = os.tmpdir();
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10 }));
   const folder = path.join(root, 'Project with spaces');
   await fs.mkdir(path.join(folder, 'Subfolder'), { recursive: true });
   const file = path.join(root, 'file.txt');
@@ -61,7 +63,7 @@ async function extensionHarness(t, stored = {}, sessions = []) {
       createStatusBarItem: () => ({ show() {}, dispose() {} }),
       createWebviewPanel: () => ({
         visible: true, reveal() {},
-        webview: { cspSource: 'fixture', asWebviewUri: value => value, postMessage: m => messages.push(structuredClone(m)), onDidReceiveMessage: callback => { receive = callback; } },
+        webview: { cspSource: 'fixture', asWebviewUri: value => value, postMessage: m => { if (m.type !== 'gitSummary' /* async after scans; codes covered in git.test.js */) messages.push(structuredClone(m)); }, onDidReceiveMessage: callback => { receive = callback; } },
         onDidChangeViewState() {}, onDidDispose: callback => { disposePanel = callback; }, dispose: () => disposePanel?.()
       })
     }
@@ -224,7 +226,7 @@ test('Two-second activity checks send changes without a full scan and discard re
   const scans = h.scanCount();
   h.setSessions([{ ...session, activeTurnSignal: true }]);
   tick.callback(); await new Promise(setImmediate);
-  assert.deepEqual(h.messages.at(-1), { type: 'activity', sessions: [{ key: session.key, running: true }] });
+  assert.deepEqual(h.messages.at(-1), { type: 'activity', sessions: [{ key: session.key, running: true, attention: '' }] });
   assert.equal(h.api.getSnapshot().sessions[0].running, true);
   assert.equal(h.scanCount(), scans);
   const count = h.messages.length;
@@ -486,6 +488,9 @@ test('Explorer resumes the matching historical chat and passage search selects t
   await h.send({type:'passages',key:s.key,query:'focus'});
   assert.equal(shown.doc.content.slice(shown.range.start,shown.range.end),'focus');
   for(const text of messages) assert.ok(shown.doc.content.includes(text));
+  shown=null; h.vscode.window.showQuickPick=()=>assert.fail('Last match opens without a picker');
+  await h.send({type:'passages',key:s.key,query:'FOCUS',last:true});
+  assert.equal(shown.doc.content.slice(shown.range.start,shown.range.end),'focus');
 });
 
 test('Connect agents registers the MCP launcher through each installed agent CLI', async t => {
@@ -508,4 +513,22 @@ test('Connect agents registers the MCP launcher through each installed agent CLI
   h.missAgent('node');
   await h.send({ type: 'registerMcp' });
   assert.match(h.messages.findLast(m => m.type === 'mcpRegistered').text, /Install Node.js/);
+});
+
+test('Attention notifications fire once per transition after the baseline publish and open the chat', async t => {
+  const h = await extensionHarness(t);
+  const base = { id: 'fixture', file: path.join(h.root, 'codex', 'sessions', 'ask.jsonl'), project: 'Fixture', cwd: '/fixture', provider: 'codex', title: 'Ask me', preview: '', createdAt: 1, updatedAt: 2, activeTurnSignal: true, activeTurnAt: Date.now(), lastWriteAt: Date.now() };
+  h.setSessions([{ ...base, key: 'codex:fixture', question: { id: 'q1', at: Date.now() } }]);
+  await h.api.refresh();
+  const before = h.infoMessages.length; // A question already open when Atlas starts is shown on the board, not announced.
+  h.setSessions([{ ...base, key: 'codex:fixture', question: { id: 'q1', at: Date.now() } }, { ...base, key: 'codex:second', id: 'second', title: 'Second ask', question: { id: 'q2', at: Date.now() } }]);
+  await h.api.refresh();
+  assert.equal(h.infoMessages.length, before + 1); assert.match(h.infoMessages.at(-1)[0], /Second ask.*waiting for your answer/);
+  await h.api.refresh();
+  assert.equal(h.infoMessages.length, before + 1);
+  h.setSessions([{ ...base, key: 'codex:second', id: 'second', title: 'Second ask', activeTurnSignal: false }]);
+  await h.api.refresh();
+  assert.equal(h.infoMessages.length, before + 1); // Finished tasks stay quiet at the default "questions" level.
+  const published = h.messages.filter(m => m.type === 'data').at(-1).sessions.find(s => s.key === 'codex:second');
+  assert.equal(published.attention, 'finished');
 });

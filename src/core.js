@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const { createReadStream } = require('node:fs');
 const { createInterface } = require('node:readline');
 const path = require('node:path');
-const { originalProjectKey, projectCatalog } = require('../media/projects');
+const { originalProjectKey, projectCatalog, usageDay } = require('../media/projects');
 
 const DEFAULT_TOPICS = [
   { id: 'interface', name: 'Interface & UX', color: '#a69cf6', keywords: 'ui ux layout sidebar dropdown mobile responsive design styling button chart' },
@@ -41,22 +41,25 @@ function conversationTitle(text) {
 }
 function turnActivity(provider, records, lastWriteAt, previous = {}) {
   let active = previous.activeTurnSignal ?? null, terminal = previous.activeTurnClosed === true, activityAt = previous.activeTurnAt || 0;
-  let activeFiles = previous.activeFiles || [];
+  let activeFiles = previous.activeFiles || [], question = previous.question || null;
   const signal = (value, record, force = false) => {
     if (value && terminal && !force) return;
     if (!value || force) activeFiles = [];
+    // A new prompt answers or supersedes an open question; a finished turn leaves it open (Codex asks asynchronously).
+    if (force) question = null;
     active = value; terminal = !value;
     activityAt = Math.min(dateMs(record.timestamp, lastWriteAt), lastWriteAt, Date.now());
   };
+  const ask = (id, record) => { if (id) question = { id, at: Math.min(dateMs(record.timestamp, lastWriteAt), lastWriteAt, Date.now()) }; };
   for (const record of records) {
     // Activity in the head belongs to an older turn when the middle is omitted.
-    if (record.type === 'atlas_sample_gap') { activeFiles = []; active = null; terminal = false; activityAt = 0; continue; }
+    if (record.type === 'atlas_sample_gap') { activeFiles = []; active = null; terminal = false; activityAt = 0; question = null; continue; }
     const payload = record.payload;
     if (provider === 'codex') {
       if (record.type === 'event_msg') {
         const kind = payload?.type;
         if (kind === 'task_started') signal(true, record, true);
-        else if (['task_complete', 'task_completed', 'turn_aborted', 'task_aborted'].includes(kind)) signal(false, record);
+        else if (['task_complete', 'task_completed', 'turn_aborted', 'task_aborted'].includes(kind)) { signal(false, record); if (kind.endsWith('aborted')) question = null; }
         else if (kind === 'user_message' && isHumanPrompt(cleanMessage(textOf(payload.message)))) signal(true, record, true);
         else if (['agent_reasoning', 'exec_command_begin', 'exec_command_end', 'patch_apply_begin', 'patch_apply_end', 'mcp_tool_call_begin', 'mcp_tool_call_end', 'web_search_begin', 'web_search_end'].includes(kind)) signal(true, record);
       }
@@ -80,6 +83,8 @@ function turnActivity(provider, records, lastWriteAt, previous = {}) {
           else if (phase === 'commentary' || phase === 'analysis') signal(true, record);
         }
         if (['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'].includes(payload?.type)) signal(true, record);
+        if (['function_call', 'custom_tool_call'].includes(payload?.type) && /request_user_input/.test(payload.name || '')) ask(payload.call_id, record);
+        if (['function_call_output', 'custom_tool_call_output'].includes(payload?.type) && payload.call_id && payload.call_id === question?.id) question = null;
         if (active && ['function_call', 'custom_tool_call'].includes(payload?.type)) {
           activeFiles = [];
           if (payload.name === 'apply_patch' && typeof payload.input === 'string') {
@@ -93,8 +98,8 @@ function turnActivity(provider, records, lastWriteAt, previous = {}) {
       if (record.type === 'user' && !record.isMeta) {
         const prompt = cleanMessage(textOf(content));
         const toolResult = record.sourceToolAssistantUUID || (Array.isArray(content) && content.some(block => block.type === 'tool_result'));
-        if (toolResult) signal(true, record);
-        else if (/^\[Request interrupted/i.test(prompt)) signal(false, record);
+        if (toolResult) { signal(true, record); if (Array.isArray(content) && content.some(block => block.type === 'tool_result' && block.tool_use_id === question?.id)) question = null; }
+        else if (/^\[Request interrupted/i.test(prompt)) { signal(false, record); question = null; }
         else if (isHumanPrompt(prompt)) signal(true, record, true);
       }
       if (record.type === 'assistant') {
@@ -105,11 +110,12 @@ function turnActivity(provider, records, lastWriteAt, previous = {}) {
       if (active && record.type === 'assistant' && Array.isArray(content)) {
         const calls = content.filter(block => block.type === 'tool_use');
         if (calls.length) activeFiles = calls.flatMap(call => typeof call.input?.file_path === 'string' ? [call.input.file_path] : []);
+        for (const call of calls) if (call.name === 'AskUserQuestion') ask(call.id, record);
       }
       if (record.type === 'system' && record.subtype === 'turn_duration') signal(false, record);
     }
   }
-  return { activeFiles, activeTurnSignal: active, activeTurnAt: activityAt, activeTurnClosed: terminal };
+  return { activeFiles, activeTurnSignal: active, activeTurnAt: activityAt, activeTurnClosed: terminal, question };
 }
 function dateMs(value, fallback = 0) { const n = Date.parse(value); return Number.isFinite(n) ? n : fallback; }
 function projectName(cwd) { return cwd ? cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : 'Other conversations'; }
@@ -186,6 +192,22 @@ async function* transcriptRecords(file) {
 function pathKey(file) {
   return process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
 }
+function addUsage(index, model, timestamp, tokens) {
+  const key = `${usageDay(dateMs(timestamp, Date.now()))}|${model || ''}`;
+  const entry = (index.usage ||= new Map()).get(key) || { day: key.slice(0, 10), model: model || '', input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  for (const field of ['input', 'cacheRead', 'cacheWrite', 'output']) entry[field] += Math.max(0, Number(tokens[field]) || 0);
+  index.usage.set(key, entry);
+}
+function usageSummary(index) {
+  for (const { model, timestamp, usage: u } of index.claudeUsage?.values() || []) {
+    index.model = model || index.model;
+    addUsage(index, model, timestamp, { input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens });
+  }
+  const days = [...(index.usage?.values() || [])].filter(entry => entry.input + entry.cacheRead + entry.cacheWrite + entry.output > 0);
+  const c = index.costState;
+  const reported = c ? { reportedCost: c.totalCostUSD, linesAdded: c.totalLinesAdded || 0, linesRemoved: c.totalLinesRemoved || 0 } : {};
+  return days.length || index.limits || c ? { days, model: index.model || '', ...reported, ...(index.limits ? { limits: index.limits } : {}) } : undefined;
+}
 function indexRecord(index, provider, record) {
   const message = searchableMessage(provider, record);
   if (message) index.parts.add(message.text.toLowerCase());
@@ -198,6 +220,11 @@ function indexRecord(index, provider, record) {
     const previous = index.files.get(key);
     if (previous?.kind !== 'Edited' || kind === 'Edited') index.files.set(key, { kind, evidence:String(evidence).slice(0,240) });
   }
+  if (provider === 'claude' && record.type === 'cost-state' && typeof record.totalCostUSD === 'number') index.costState = record;
+  if (provider === 'claude' && record.type === 'assistant' && record.message?.usage) {
+    // Claude writes one record per content block with the same message id; the last snapshot carries the full usage.
+    (index.claudeUsage ||= new Map()).set(record.message.id || record.uuid || index.claudeUsage.size, { model: record.message.model, timestamp: record.timestamp, usage: record.message.usage });
+  }
   if (provider === 'claude' && record.type === 'assistant' && Array.isArray(record.message?.content)) {
     for (const block of record.message.content) {
       if (block?.type !== 'tool_use') continue;
@@ -206,6 +233,20 @@ function indexRecord(index, provider, record) {
     }
   }
   if (provider !== 'codex') return;
+  if (record.type === 'turn_context' && typeof p?.model === 'string') index.model = p.model;
+  if (record.type === 'event_msg' && p?.type === 'token_count') {
+    const total = p.info?.total_token_usage, prev = index.codexTotal;
+    let turn = p.info?.last_token_usage;
+    if (total) {
+      // Totals are cumulative, so their difference survives duplicate events and the omitted middle of large files.
+      if (!prev) turn = total;
+      else if ((total.total_tokens || 0) >= (prev.total_tokens || 0)) turn = Object.fromEntries(Object.keys(total).map(k => [k, (total[k] || 0) - (prev[k] || 0)]));
+      index.codexTotal = total;
+    }
+    if (turn) addUsage(index, index.model, record.timestamp, { input: (turn.input_tokens || 0) - (turn.cached_input_tokens || 0), cacheRead: turn.cached_input_tokens, cacheWrite: turn.cache_write_input_tokens, output: turn.output_tokens });
+    const limits = p.rate_limits;
+    if (limits && typeof limits === 'object') index.limits = { plan: limits.plan_type || '', primary: limits.primary || null, secondary: limits.secondary || null, credits: limits.credits?.balance ?? null, at: dateMs(record.timestamp, Date.now()) };
+  }
   if (record.type === 'event_msg' && p?.type === 'patch_apply_end' && p.success !== false) {
     for (const [file, change] of Object.entries(p.changes || {})) {
       const excerpt = typeof change?.unified_diff === 'string' && /^\+(?!\+\+).*$/m.exec(change.unified_diff)?.[0];
@@ -246,8 +287,17 @@ async function fileMatch(session, target, currentFolder = session.cwd, token) {
   }
   return null;
 }
+// Word starts, loosely: "test" finds "tests", but "3d" skips hashes and colours such as 3dd2f or #3d3d3d. Keep in sync with media/board.js.
+function searchPatterns(query) {
+  return String(query || '').trim().split(/\s+/).filter(Boolean)
+    .map(word => new RegExp(`(?<![\\p{L}\\p{N}_])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\p{L}*(?![\\p{L}\\p{N}_])`, 'giu'));
+}
+function lastMatch(text, pattern) {
+  const match = [...text.matchAll(pattern)].at(-1);
+  return match ? { start: match.index, end: match.index + match[0].length } : null;
+}
 async function passages(session, query, targetLine) {
-  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const patterns = searchPatterns(query);
   const matches = [];
   let previous, line = 0, found;
   for await (const record of transcriptRecords(session.file)) {
@@ -256,12 +306,9 @@ async function passages(session, query, targetLine) {
     if (!message || (message.text === previous?.text && message.role === previous.role)) continue;
     if (found) { found.after = message; break; }
     if (targetLine === line) found = { before:previous, message };
-    if (targetLine === undefined && words.length) {
-      const lower = message.text.toLowerCase();
-      if (words.every(word => lower.includes(word))) {
-        const offset = lower.indexOf(words[0]);
-        matches.push({ line, label:message.text.slice(Math.max(0,offset-45),offset+155).replace(/\s+/g,' '), description:message.role });
-      }
+    if (targetLine === undefined && patterns.length && patterns.every(pattern => message.text.search(pattern) >= 0)) {
+      const offset = lastMatch(message.text, patterns[0]).start;
+      matches.push({ line, label:message.text.slice(Math.max(0,offset-45),offset+155).replace(/\s+/g,' '), description:message.role });
     }
     previous = message;
   }
@@ -294,11 +341,12 @@ function parseSession(provider, file, records, stat, titleEntry) {
   const first = userMessages.map((m, i) => conversationTitle(i === 0 && projectDraft ? opening.slice(starter.length) : m.text)).find(Boolean) || '';
   const customTitle = [...records].reverse().find(r => r.type === 'custom-title')?.customTitle;
   const summary = [...records].reverse().find(r => r.type === 'summary')?.summary;
-  const title = conversationTitle(titleEntry?.thread_name) || conversationTitle(customTitle) || conversationTitle(summary) || first.slice(0, 100) || 'Untitled conversation';
+  const aiTitle = [...records].reverse().find(r => r.type === 'ai-title')?.aiTitle;
+  const title = conversationTitle(titleEntry?.thread_name) || conversationTitle(customTitle) || conversationTitle(aiTitle) || conversationTitle(summary) || first.slice(0, 100) || 'Untitled conversation';
   const createdAt = dateMs(meta?.timestamp || records.find(r => r.timestamp)?.timestamp, stat.birthtimeMs || stat.mtimeMs);
   return { key: `${provider}:${id}`, id, provider, title, cwd, ...(handoffFrom && UUID.test(handoffFrom.split(':')[1]) ? { handoffFrom } : {}), project: projectName(cwd), ...(projectDraft ? { starterProjectKey: originalProjectKey({ cwd: folder }) } : {}), subfolderHint: subfolderHint(records, cwd), ...turnActivity(provider, records, stat.mtimeMs), lastWriteAt: stat.mtimeMs, createdAt,
     updatedAt: Math.max(stat.mtimeMs, dateMs(titleEntry?.updated_at)), preview: (messages.at(-1)?.text || '').slice(0, 700),
-    fileEvidence: history.files, searchText: [...history.parts].join('\n'), messages: messages.slice(-12), file, sampled: stat.size > 384 * 1024 };
+    fileEvidence: history.files, searchText: [...history.parts].join('\n'), usage: usageSummary(history), messages: messages.slice(-12), file, sampled: stat.size > 384 * 1024 };
 }
 async function sample(file, size) {
   const handle = await fs.open(file, 'r');
@@ -349,6 +397,7 @@ class SessionIndex {
         for await (const record of transcriptRecords(file)) indexRecord(history, provider, record);
         session.searchText = [...history.parts].join('\n');
         session.fileEvidence = history.files;
+        session.usage = usageSummary(history);
       }
       const evidenceAt = session?.activeTurnAt || 0;
       const missingEvidence = session?.activeTurnSignal === null;
@@ -358,6 +407,7 @@ class SessionIndex {
         const previous = cached.session;
         const activity = stat.size > cached.size ? await appendedActivity(file, cached.size, stat, previous) : previous;
         session.activeFiles = activity.activeFiles;
+        session.question = activity.question;
         session.activeTurnSignal = activity.activeTurnSignal;
         session.activeTurnClosed = activity.activeTurnClosed;
         session.activeTurnAt = activity.activeTurnAt;
@@ -381,7 +431,7 @@ class SessionIndex {
         try {
           const stat = await fs.stat(session.file);
           const latest = await this.readSession(session.provider, session.file, stat);
-          if (latest?.id === session.id) return { ...session, activeFiles: latest.activeFiles, activeTurnSignal: latest.activeTurnSignal, activeTurnAt: latest.activeTurnAt, activeTurnClosed: latest.activeTurnClosed, lastWriteAt: latest.lastWriteAt };
+          if (latest?.id === session.id) return { ...session, activeFiles: latest.activeFiles, activeTurnSignal: latest.activeTurnSignal, activeTurnAt: latest.activeTurnAt, activeTurnClosed: latest.activeTurnClosed, question: latest.question, lastWriteAt: latest.lastWriteAt };
         } catch { /* Keep the prior observation during rotation or a partial write. */ }
         return session;
       })));
@@ -448,13 +498,16 @@ function reconcile(sessions, state) {
 }
 function publicSessions(sessions, state, now = Date.now(), runningTimeoutMs = DEFAULT_RUNNING_TIMEOUT_MS) {
   const projects = new Map(projectCatalog(sessions, state.customProjects || [], state.projectNames).map(p => [p.key, p]));
-  return sessions.map(({ file, fileEvidence, messages, activeTurnSignal, activeTurnAt, activeTurnClosed, lastWriteAt, ...s }) => {
+  return sessions.map(({ file, fileEvidence, messages, activeTurnSignal, activeTurnAt, activeTurnClosed, question, lastWriteAt, ...s }) => {
     const { projectOverride, ...card } = state.cards[s.key] || {};
     const target = projects.get(projectOverride);
     const automatic = projects.get(originalProjectKey(s));
     const age = Math.max(0, now - (activeTurnAt || lastWriteAt));
     const running = activeTurnSignal === true && age <= runningTimeoutMs;
-    return { ...s, ...card, running, title: card.title || s.title, project: target?.name || automatic?.name || s.project, ...(target ? { projectOverride } : {}) };
+    // "finished" lasts one running-timeout after the turn ended, unless the card was opened since; a question waits until answered.
+    const finished = activeTurnSignal === false && activeTurnAt > (card.seenAt || 0) && age <= runningTimeoutMs;
+    const attention = card.status === 'Done' ? '' : question ? 'question' : finished ? 'finished' : '';
+    return { ...s, ...card, running, attention, attentionAt: attention === 'question' ? question.at : attention ? activeTurnAt : 0, title: card.title || s.title, project: target?.name || automatic?.name || s.project, ...(target ? { projectOverride } : {}) };
   });
 }
-module.exports = { passages, fileMatch, DEFAULT_TOPICS, DEFAULT_RUNNING_TIMEOUT_MS, UUID, claudeProjectPrompt, parseLines, parseSession, sample, classify, reconcile, publicSessions, SessionIndex };
+module.exports = { passages, searchPatterns, lastMatch, fileMatch, DEFAULT_TOPICS, DEFAULT_RUNNING_TIMEOUT_MS, UUID, claudeProjectPrompt, parseLines, parseSession, sample, classify, reconcile, publicSessions, SessionIndex };

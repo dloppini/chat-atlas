@@ -6,10 +6,11 @@ const { configureExplorerMenu } = require('./explorer-menu');
 const { watch } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { readGitDashboard, readGitDiff, runGitOperation, readOnlyGit } = require('./git');
+const { readGitDashboard, readGitDiff, runGitOperation, readOnlyGit, readGitStatusCodes, readBehindMain } = require('./git');
 const { createEngineering } = require('./engineering');
 const crypto = require('node:crypto');
-const { SessionIndex, reconcile, publicSessions, UUID, passages, fileMatch } = require('./core');
+const { SessionIndex, reconcile, publicSessions, UUID, passages, searchPatterns, lastMatch, fileMatch } = require('./core');
+const { usageDay, formatTokens } = require('../media/projects');
 const { openNativeSession, openNewProjectChat } = require('./providers');
 const { codexBinary } = require('./codex-chat');
 const { execFile } = require('node:child_process');
@@ -25,11 +26,11 @@ function activate(context) {
   const browseFiles = registerFiles(vscode, context, activity);
   const highlight = () => vscode.workspace.getConfiguration('chatAtlas').get('highlightActiveFiles', false);
   const monitoring = () => panel?.visible || highlight();
-  let boardReady = false, pendingFolder, pendingProject;
+  let boardReady = false, pendingFolder, pendingProject, pendingGit = false;
   function presentProject() {
     if (boardReady && pendingProject) {
-      post({ type: 'projectPicked', key: pendingProject });
-      pendingProject = undefined;
+      post({ type: 'projectPicked', key: pendingProject, git: pendingGit });
+      pendingProject = undefined; pendingGit = false;
     }
   }
   function presentFolder() {
@@ -136,12 +137,69 @@ function activate(context) {
     const timeout = Number.isFinite(minutes) ? Math.max(5, Math.min(1440, minutes)) * 60000 : 60 * 60000;
     return publicSessions(locatedSessions(), state, Date.now(), timeout);
   };
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
+  const pricing = () => { const value = vscode.workspace.getConfiguration('chatAtlas').get('modelPricing'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; };
   const publish = () => {
     const sessions = visibleSessions();
     activity.update(highlight() ? sessions : []);
-    publishedRunning = new Map(sessions.map(s => [s.key, s.running]));
-    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: catalog(), sidebarPreferences, subfolders, busy });
+    publishedRunning = new Map(sessions.map(s => [s.key, s.running + ':' + s.attention]));
+    announce(sessions);
+    const today = usageDay(Date.now()), used = sessions.flatMap(s => s.usage?.days || []).filter(d => d.day === today).reduce((n, d) => n + d.input + d.cacheRead + d.cacheWrite + d.output, 0);
+    status.text = used ? `$(layout) Chat Atlas · ${formatTokens(used)} today` : '$(layout) Chat Atlas';
+    status.tooltip = used ? 'Open your conversation board · Tokens used today across Codex and Claude Code, including cached input' : 'Open your conversation board';
+    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: catalog(), sidebarPreferences, subfolders, busy, pricing: pricing() });
   };
+  // One toast per transition into "asks you" or "finished"; the first publish only records the baseline.
+  let announced = null;
+  function announce(sessions) {
+    const level = vscode.workspace.getConfiguration('chatAtlas').get('notifications', 'questions');
+    const next = new Map(sessions.filter(s => s.attention).map(s => [s.key, s.attention]));
+    if (announced && level !== 'off') {
+      for (const s of sessions) {
+        if (!s.attention || announced.get(s.key) === s.attention || (level === 'questions' && s.attention !== 'question')) continue;
+        const text = s.attention === 'question' ? `is waiting for your answer` : `finished its task`;
+        void vscode.window.showInformationMessage(`Chat Atlas: "${s.title}" ${text}.`, 'Open chat').then(choice => { if (choice) openSession(s, false, false, true).catch(error => vscode.window.showErrorMessage(`Chat Atlas: ${error.message}`)); });
+      }
+    }
+    announced = next;
+  }
+  let gitSummaryTask;
+  const fetchedAt = new Map(), announcedBehind = new Map();
+  function publishGitSummary() {
+    // One status per linked project, four at a time, after each full scan; the remote main is fetched at most every 10 minutes per project.
+    gitSummaryTask ||= (async () => {
+      const projects = catalog().filter(item => item.cwd), summary = {}, behind = {};
+      const check = vscode.workspace.getConfiguration('chatAtlas').get('checkBehindMain', true);
+      for (let i = 0; i < projects.length; i += 4) {
+        await Promise.all(projects.slice(i, i + 4).map(async item => {
+          const codes = await readGitStatusCodes(item.cwd);
+          if (!codes) return;
+          summary[item.key] = codes;
+          const fetch = check && Date.now() - (fetchedAt.get(item.cwd) || 0) > 600000;
+          if (fetch) fetchedAt.set(item.cwd, Date.now());
+          const main = await readBehindMain(item.cwd, fetch);
+          if (main?.behind) behind[item.key] = { count: main.behind, base: main.base, hash: main.hash, name: item.name };
+        }));
+        if (disposed) return;
+      }
+      post({ type: 'gitSummary', summary, behind });
+      if (check) announceBehind(behind);
+    })().finally(() => { gitSummaryTask = undefined; });
+  }
+  function announceBehind(behind) {
+    // Once per project and remote main revision, so a new push to main announces again.
+    const fresh = Object.entries(behind).filter(([key, item]) => announcedBehind.get(key) !== item.hash && !sidebarPreferences.hiddenProjects.includes(key));
+    for (const key of [...announcedBehind.keys()]) if (!behind[key]) announcedBehind.delete(key);
+    for (const [key, item] of fresh) announcedBehind.set(key, item.hash);
+    if (!fresh.length) return;
+    const [key, first] = fresh[0], commits = n => `${n} ${n === 1 ? 'commit' : 'commits'}`;
+    const text = fresh.length === 1 ? `"${first.name}" is ${commits(first.count)} behind ${first.base}. Pull or merge to update.`
+      : `${fresh.length} projects are behind their main branch: ${fresh.map(([, item]) => `${item.name} (${item.count})`).join(', ')}.`;
+    void vscode.window.showInformationMessage(`Chat Atlas: ${text}`, 'Open Git').then(async choice => {
+      if (!choice || disposed) return;
+      await open(); pendingProject = key; pendingGit = true; presentProject();
+    });
+  }
   async function refreshActivity() {
     if (disposed || busy || activityBusy || !monitoring()) return;
     activityBusy = true;
@@ -153,10 +211,11 @@ function activate(context) {
       current = { ...current, sessions };
       const visible = visibleSessions();
       if (highlight()) activity.update(visible);
-      const changes = visible.filter(s => publishedRunning.get(s.key) !== s.running).map(s => ({ key: s.key, running: s.running }));
+      const changes = visible.filter(s => publishedRunning.get(s.key) !== s.running + ':' + s.attention).map(s => ({ key: s.key, running: s.running, attention: s.attention }));
       if (changes.length) {
-        for (const s of changes) publishedRunning.set(s.key, s.running);
+        for (const s of changes) publishedRunning.set(s.key, s.running + ':' + s.attention);
         post({ type: 'activity', sessions: changes });
+        announce(visible);
       }
     } finally { activityBusy = false; }
   }
@@ -258,7 +317,7 @@ function activate(context) {
     busy = true; publish();
     try { current = await index.scan(settings()); const sessions = locatedSessions(); subfolders = await scanSubfolders(sessions); reconcile(sessions, state); await save(); }
     catch (e) { current.errors = [`Refresh failed: ${e.message}`]; }
-    finally { busy = false; if (!disposed) { publish(); if (panel) watchHistory(); } }
+    finally { busy = false; if (!disposed) { publish(); if (panel) watchHistory(); publishGitSummary(); } }
   }
   async function openSession(s, editor = false, terminalOnly = false, foreground = false) {
     if (!UUID.test(s.id)) throw new Error('Invalid session identifier.');
@@ -325,12 +384,12 @@ function activate(context) {
       if (picked) { await resumeCard(located(picked.session)); publish(); }
     } catch (error) { vscode.window.showErrorMessage('Chat Atlas: ' + error.message); }
   }
-  async function openPassage(session, query) {
+  async function openPassage(session, query, last) {
     if (!query) query = await vscode.window.showInputBox({title:'Find a passage', prompt:'Search this conversation'});
     if (!query?.trim()) return;
     const hits = await passages(session, query);
     if (!hits.length) { post({type:'notice', text:'No single message matches these words in this conversation.'}); return; }
-    const hit = await vscode.window.showQuickPick(hits, {title:'Matching passages · ' + (state.cards[session.key]?.title || session.title), placeHolder:'Open a passage with its surrounding exchange'});
+    const hit = last ? hits.at(-1) : await vscode.window.showQuickPick(hits.reverse(), {title:'Matching passages · ' + (state.cards[session.key]?.title || session.title), placeHolder:'Newest first · open a passage with its surrounding exchange'});
     if (!hit) return;
     const exchange = await passages(session, query, hit.line);
     if (!exchange) throw new Error('The transcript changed. Search again.');
@@ -338,9 +397,9 @@ function activate(context) {
     const before = exchange.before ? section(exchange.before) + '\n\n' : '';
     const content = before + section(exchange.message) + (exchange.after ? '\n\n' + section(exchange.after) : '');
     const doc = await vscode.workspace.openTextDocument({content, language:'plaintext'});
-    const offset = exchange.message.text.toLowerCase().indexOf(query.trim().split(/\s+/)[0].toLowerCase());
-    const start = before.length + section(exchange.message).length - exchange.message.text.length + Math.max(0,offset);
-    await vscode.window.showTextDocument(doc, {preview:true, selection:new vscode.Range(doc.positionAt(start),doc.positionAt(start + query.trim().split(/\s+/)[0].length))});
+    const match = lastMatch(exchange.message.text, searchPatterns(query)[0]) || { start:0, end:0 };
+    const base = before.length + section(exchange.message).length - exchange.message.text.length;
+    await vscode.window.showTextDocument(doc, {preview:true, selection:new vscode.Range(doc.positionAt(base + match.start),doc.positionAt(base + match.end))});
   }
   async function onMessage(m) {
     if (!m || typeof m.type !== 'string') return;
@@ -508,7 +567,7 @@ function activate(context) {
       const s = located(recorded);
       const card = state.cards[s.key];
       if (m.type === 'passages') {
-        await openPassage(recorded, typeof m.query === 'string' ? m.query.trim().slice(0,1000) : '');
+        await openPassage(recorded, typeof m.query === 'string' ? m.query.trim().slice(0,1000) : '', m.last === true);
         return;
       }
       if (m.type === 'handoffFiles') {
@@ -606,6 +665,7 @@ function activate(context) {
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('chatAtlas.theme')) sendTheme();
     if (e.affectsConfiguration('chatAtlas.highlightActiveFiles')) updateHighlight();
+    if (e.affectsConfiguration('chatAtlas.modelPricing')) publish();
   }));
   if (highlight()) updateHighlight();
   context.subscriptions.push(vscode.window.registerUriHandler({
@@ -626,7 +686,6 @@ function activate(context) {
       } catch (error) { vscode.window.showErrorMessage(`Chat Atlas: ${error.message}`); }
     }));
   }
-  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
   context.subscriptions.push(vscode.commands.registerCommand('chatAtlas.selectProject', async () => {
     await refresh();
     const choice = await vscode.window.showQuickPick(catalog()

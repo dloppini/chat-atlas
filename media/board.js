@@ -1,4 +1,4 @@
-/* global acquireVsCodeApi, activityAge, groupProjects, groupSubfolders, effectiveSubfolder, originalProjectKey, projectGroupKey, remapProjectKeys, resolveProjectSelection, orderedProjects, moveProject */
+/* global acquireVsCodeApi, activityAge, usageDay, formatTokens, usagePrice, usageCost, groupProjects, groupSubfolders, effectiveSubfolder, originalProjectKey, projectGroupKey, remapProjectKeys, resolveProjectSelection, orderedProjects, moveProject */
 'use strict';
 const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : window.atlasPreview;
 const saved = host.getState() || {};
@@ -28,7 +28,9 @@ const gitCollapsed = new Set(Array.isArray(saved.gitCollapsed) ? saved.gitCollap
 const gitBranchFocus = saved.gitBranchFocus && typeof saved.gitBranchFocus === 'object' && !Array.isArray(saved.gitBranchFocus) ? saved.gitBranchFocus : {};
 let gitFocusPending = false;
 let gitOpen = false, gitProject = '', gitRequestId = 0, gitResult = null;
+let gitSummary = {}, gitBehind = {};
 let engineeringOpen = saved.engineeringOpen === true, engineeringProject = '', engineeringRequestId = 0;
+let usageOpen = saved.usageOpen === true, usageRange = [7, 30, 0].includes(saved.usageRange) ? saved.usageRange : 30;
 let engineeringView = ['architecture', 'quality', 'impact'].includes(saved.engineeringView) ? saved.engineeringView : 'overview';
 const engineeringPreferences = new Map(Object.entries(saved.engineeringPreferences || {}));
 const engineeringResults = new Map();
@@ -73,7 +75,7 @@ function showNotice(message) {
     window.scrollTo({ ...pageScroll, behavior: 'instant' });
   }, 15000);
 }
-const persist = () => host.setState({ engineeringOpen, engineeringView, engineeringPreferences: Object.fromEntries(engineeringPreferences), gitCommitDrafts:Object.fromEntries(gitCommitDrafts), gitAutoFit, gitHideHistory, gitWrap, gitDocked, gitDockHeight, themeMigrated, theme, gitBranchFocus, gitHeights, gitWidths, gitFileTree, gitCollapsed: [...gitCollapsed].slice(-300), view, cardSort, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
+const persist = () => host.setState({ usageOpen, usageRange, engineeringOpen, engineeringView, engineeringPreferences: Object.fromEntries(engineeringPreferences), gitCommitDrafts:Object.fromEntries(gitCommitDrafts), gitAutoFit, gitHideHistory, gitWrap, gitDocked, gitDockHeight, themeMigrated, theme, gitBranchFocus, gitHeights, gitWidths, gitFileTree, gitCollapsed: [...gitCollapsed].slice(-300), view, cardSort, project, subfolderFilter, provider, query, showDone, selected, focusedGroup, sidebarHidden, sidebarWidth, projectSort, projectOrder, hiddenProjects, showSubfolders });
 const persistSidebar = () => { persist(); send({ type: 'sidebarPreferences', preferences: { projectSort, projectOrder, hiddenProjects, sidebarWidth, showSubfolders } }); };
 function sidebarBounds() { return { min: 180, max: Math.max(180, Math.min(520, window.innerWidth - 480)) }; }
 function applySidebarWidth() {
@@ -286,22 +288,26 @@ function toggleGitDock() {
 function renderGit(rebuild = true) {
   const active = gitOpen && !!project;
   const engineering = engineeringOpen && !!project;
-  const docked = gitDocked && !!project && !active;
+  const usage = usageOpen && !active && !engineering;
+  const docked = gitDocked && !!project && !active && !usage;
   document.body.classList.toggle('git-mode', active);
   document.body.classList.toggle('git-docked', docked);
   applyGitLayout();
   if (!active) document.querySelectorAll('#sources, .toolbar, .filterbar, #board, main > footer').forEach(node => { node.hidden = false; });
   $('project-views').hidden = !project;
-  $('conversation-switch').setAttribute('aria-pressed', String(!active && !engineering));
+  $('conversation-switch').setAttribute('aria-pressed', String(!active && !engineering && !usage));
+  $('usage-switch').setAttribute('aria-pressed', String(usage));
   $('engineering-switch').setAttribute('aria-pressed', String(engineering));
   $('engineering-switch').hidden = !project;
   $('git-switch').setAttribute('aria-pressed', String(active));
   $('git-dashboard').hidden = !active && !docked;
   syncGitWatch(active || docked ? project : '');
   document.querySelectorAll('#sources, #focus-strip, .toolbar, .filterbar, #batch-actions, #board, main > footer').forEach(node => {
-    if (active || engineering) node.hidden = true;
+    if (active || engineering || usage) node.hidden = true;
   });
   $('engineering-panel').hidden = !engineering;
+  $('usage-panel').hidden = !usage;
+  if (usage) { $('detail').hidden = true; renderUsage(); }
   if (engineering) {
     $('detail').hidden = true;
     if (engineeringProject !== project) {
@@ -1057,6 +1063,13 @@ function update(s, patch) {
   }
   send({ type: 'update', key: s.key, patch }); render();
 }
+// Word starts, loosely: "test" finds "tests", but "3d" skips hashes and colours such as 3dd2f or #3d3d3d. Keep in sync with searchPatterns in src/core.js.
+let patternCache = { query: null, patterns: [] };
+function searchPatterns() {
+  if (patternCache.query !== query) patternCache = { query, patterns: query.trim().split(/\s+/).filter(Boolean)
+    .map(word => new RegExp(`(?<![\\p{L}\\p{N}_])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\p{L}*(?![\\p{L}\\p{N}_])`, 'giu')) };
+  return patternCache.patterns;
+}
 function select(s, open = false) {
   const pageScroll = captureScrollPosition();
   selected = s.key; persist();
@@ -1075,6 +1088,15 @@ function setCardRunning(c, running) {
   const meta = c.querySelector('.card-meta');
   meta.insertBefore(indicator, meta.querySelector('.card-times'));
 }
+const attentionLabels = { question: ['Asks you', 'The agent asked a question and is waiting for your answer'], finished: ['Finished', 'The task finished since you last opened this chat'] };
+function setCardAttention(c, attention) {
+  c.querySelector('.attention')?.remove();
+  c.classList.toggle('asks', attention === 'question');
+  if (!attentionLabels[attention]) return;
+  const [text, title] = attentionLabels[attention];
+  const badge = el('span', `attention ${attention}`, text); badge.title = title;
+  c.querySelector('.card-project').append(badge);
+}
 function syncProjectRunning() {
   const counts = new Map();
   for (const session of data.sessions) if (session.running) {
@@ -1089,6 +1111,26 @@ function syncProjectRunning() {
     const indicator = previous || el('span', 'run-indicator project-run-indicator');
     indicator.setAttribute('role', 'img'); indicator.setAttribute('aria-label', status); indicator.title = status;
     if (!previous) row.querySelector('.project-name-row').append(indicator);
+  }
+}
+// Same N/D/M mapping as the file badges; every other change (M, R, C, T, U) reads as modified.
+const gitDotKinds = [['N','new'],['M','modified'],['D','deleted']];
+function syncProjectGit() {
+  for (const row of $('projects').querySelectorAll('.project-entry')) {
+    const counts = { N: 0, M: 0, D: 0 };
+    for (const code of gitSummary[row.dataset.project] || []) { const [letter] = gitFileStatus(code); counts[letter === 'N' || letter === 'D' ? letter : 'M']++; }
+    const kinds = gitDotKinds.filter(([letter]) => counts[letter]);
+    const behind = gitBehind[row.dataset.project];
+    const parts = kinds.map(([letter, kind]) => `${counts[letter]} ${kind}`);
+    const status = [parts.length ? `Uncommitted: ${parts.join(', ')}` : '', behind ? `${behind.count} ${behind.count === 1 ? 'commit' : 'commits'} behind ${behind.base}` : ''].filter(Boolean).join('. ');
+    let dots = row.querySelector('.project-git-dots');
+    if (row.dataset.git === status) continue;
+    row.dataset.git = status; dots?.remove();
+    if (!status) continue;
+    dots = el('span', 'project-git-dots'); dots.setAttribute('role', 'img'); dots.setAttribute('aria-label', status); dots.title = status;
+    for (const [letter, kind] of kinds) { const item = el('span', 'git-count', String(counts[letter])); item.dataset.kind = kind; dots.append(item); }
+    if (behind) { const item = el('span', 'git-count', String(behind.count)); item.dataset.kind = 'behind'; dots.append(item); }
+    row.querySelector('.project-name').after(dots);
   }
 }
 function card(s) {
@@ -1116,8 +1158,8 @@ function card(s) {
   checkbox.addEventListener('change', () => update(s, { done: checkbox.checked })); label.append(checkbox, document.createTextNode('Done')); bottom.append(label);
   const info = button('Details', 'info', () => select(s), `Details for ${s.title}`); info.dataset.action = 'detail';
   const pin = button(s.pinned ? '★' : '☆', '', () => update(s, { pinned: !s.pinned }), `${s.pinned ? 'Unpin' : 'Pin'} ${s.title}`); pin.dataset.action = 'pin'; pin.setAttribute('aria-pressed', String(!!s.pinned));
-  if (query.trim() && query.trim().toLowerCase().split(/\s+/).some(word => s.searchText?.includes(word))) {
-    bottom.append(button('Passages','info',() => send({type:'passages',key:s.key,query}), 'Find matching passages in ' + s.title));
+  if (searchPatterns().length && searchPatterns().every(pattern => (s.searchText || '').search(pattern) >= 0)) {
+    bottom.append(button('Last match','info',() => send({type:'passages',key:s.key,query,last:true}), `Open the last passage matching “${query.trim()}” in ${s.title}`));
   }
   bottom.append(info, pin);
   const folder = showSubfolders ? effectiveSubfolder(s, data.subfolders?.[projectGroupKey(s)] || []) : '';
@@ -1126,11 +1168,12 @@ function card(s) {
   projectLabel.append(el('span', 'card-project-name', projectName));
   projectLabel.title = projectName;
   if (s.status !== 'Inbox' && s.status !== 'Done') projectLabel.append(el('span', 'status', s.status));
-  if (s.seenAt > 0 && s.updatedAt > s.seenAt) projectLabel.append(el('span', 'activity', 'Updated'));
+  if (!s.attention && s.seenAt > 0 && s.updatedAt > s.seenAt) projectLabel.append(el('span', 'activity', 'Updated'));
   c.append(pick, body, projectLabel, meta, bottom);
-  setCardRunning(c, s.running);
+  setCardRunning(c, s.running); setCardAttention(c, s.attention);
   return c;
 }
+let renderSummary = () => {};
 function render(pageScroll = captureScrollPosition()) {
   const board = $('board');
   const activeEl = document.activeElement;
@@ -1154,7 +1197,6 @@ function render(pageScroll = captureScrollPosition()) {
   }
   const sidebarProjects = ordered.filter(([key, p]) => !hiddenProjects.includes(key) && (p.count > 0 || p.created || key === project));
   $('project-sort').value = projectSort;
-  $('subfolder-toggle').textContent = showSubfolders ? 'Hide subfolders' : 'Show subfolders';
   $('subfolder-toggle').setAttribute('aria-pressed', String(showSubfolders));
   $('projects').replaceChildren(...sidebarProjects.flatMap(([key, p], index) => {
     const row = el('div', 'project-entry'); row.dataset.project = key;
@@ -1204,7 +1246,7 @@ function render(pageScroll = captureScrollPosition()) {
     }
     return [row, ...children];
   }));
-  syncProjectRunning();
+  syncProjectRunning(); syncProjectGit();
   if (projectFocus) [...$('projects').querySelectorAll('button')].find(b => b.getAttribute('aria-label') === projectFocus)?.focus({ preventScroll: true });
   renderHiddenProjects(projects);
   $('total').textContent = data.sessions.length;
@@ -1220,15 +1262,19 @@ function render(pageScroll = captureScrollPosition()) {
   $('project-folder-path').textContent = shownFolder || 'No folder linked';
   $('project-folder-path').title = shownFolder;
   $('link-project-folder').hidden = !project.startsWith('custom:') && !projectFolder;
-  $('link-project-folder').textContent = projectFolder ? 'Reconnect folder\u2026' : 'Link folder\u2026';
+  $('link-project-folder').replaceChildren(el('span', 'full-label', projectFolder ? 'Reconnect folder\u2026' : 'Link folder\u2026'), el('span', 'short-label', projectFolder ? 'Reconnect\u2026' : 'Link\u2026'));
   $('new-chat').hidden = !project;
   $('new-chat').title = projectFolder ? `New chat in ${projectName}` : 'Link a folder to start a chat';
   const scoped = data.sessions.filter(s => !project || (projectGroupKey(s) === project && (subfolderFilter === null || effectiveSubfolder(s, data.subfolders?.[project] || []) === subfolderFilter)));
   const done = scoped.filter(s => s.status === 'Done').length;
   const projectCount = ordered.filter(([, p]) => p.count > 0 || p.created).length;
   const open = scoped.length - done;
-  $('summary').textContent = data.busy && !data.sessions.length ? 'Reading local conversations…'
-    : `${open} open · ${done} finished${project ? '' : ` · ${projectCount} project${projectCount === 1 ? '' : 's'}`}`;
+  renderSummary = () => {
+    const asks = scoped.filter(s => s.attention === 'question').length, ready = scoped.filter(s => s.attention === 'finished').length;
+    $('summary').textContent = data.busy && !data.sessions.length ? 'Reading local conversations…'
+      : [`${open} open`, `${done} finished`, project ? '' : `${projectCount} project${projectCount === 1 ? '' : 's'}`, asks ? `${asks} ask${asks === 1 ? 's' : ''} you` : '', ready ? `${ready} ready to review` : ''].filter(Boolean).join(' · ');
+  };
+  renderSummary();
   $('done-count').textContent = done;
   $('refresh').disabled = data.busy;
   $('refresh').title = data.busy ? 'Syncing…' : 'Refresh';
@@ -1246,8 +1292,8 @@ function render(pageScroll = captureScrollPosition()) {
   $('focus-strip').hidden = pins.length === 0;
   $('focus-strip').replaceChildren(el('span', '', 'Pinned'), ...pins.map(s => button(s.title, `focus-item${s.key === selected ? ' selected' : ''}`, () => select(s, true), `Resume ${s.title}`)));
   $('errors').textContent = data.errors.join(' ');
-  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const visible = scoped.filter(s => (provider === 'all' || s.provider === provider) && (showDone || s.status !== 'Done') && words.every(word => (s.searchText || '').includes(word) || `${s.title} ${s.preview} ${s.project} ${effectiveSubfolder(s, data.subfolders?.[projectGroupKey(s)] || [])} ${s.note} ${data.topics.find(t => t.id === s.topic)?.name || ''}`.toLowerCase().includes(word))).sort((a, b) => sortTime(b) - sortTime(a) || a.key.localeCompare(b.key));
+  // Only the chat's own words count: its transcript, title and note, never the project or topic name.
+  const visible = scoped.filter(s => (provider === 'all' || s.provider === provider) && (showDone || s.status !== 'Done') && searchPatterns().every(pattern => `${s.searchText || ''}\n${s.title}\n${s.note || ''}`.search(pattern) >= 0)).sort((a, b) => sortTime(b) - sortTime(a) || a.key.localeCompare(b.key));
   const groups = view === 'topics' ? data.topics.map(t => ({ id: t.id, name: t.name, sessions: visible.filter(s => s.topic === t.id) })) : view === 'workflow' ? ['Inbox', 'In progress', 'Waiting', 'Done'].map(status => ({ id: status, name: status, sessions: visible.filter(s => s.status === status) })) : [...new Set(visible.map(s => new Date(sortTime(s)).toLocaleDateString()))].map(day => ({ id: day, name: day, sessions: visible.filter(s => new Date(sortTime(s)).toLocaleDateString() === day) }));
   if (focusedGroup && !data.busy && !groups.some(g => g.id === focusedGroup)) { focusedGroup = ''; persist(); }
   const shownGroups = focusedGroup ? groups.filter(g => g.id === focusedGroup) : groups;
@@ -1342,27 +1388,124 @@ $('handoff-close').addEventListener('click', () => $('handoff-dialog').close());
 $('pickup').addEventListener('click', () => {
   const list = $('pickup-list'); list.replaceChildren();
   // A chat with a running task belongs here whatever its board status; it is listed once, under Running.
-  const sessions = data.sessions.filter(s => projectGroupKey(s) === project && (s.running || ['In progress','Waiting'].includes(s.status)));
-  for (const status of ['Running','In progress','Waiting']) {
-    const group = sessions.filter(s => status === 'Running' ? s.running : !s.running && s.status === status);
+  const sessions = data.sessions.filter(s => projectGroupKey(s) === project && (s.attention || s.running || ['In progress','Waiting'].includes(s.status)));
+  for (const status of ['Asks you','Finished','Running','In progress','Waiting']) {
+    const group = sessions.filter(s => status === 'Asks you' ? s.attention === 'question' : status === 'Finished' ? s.attention === 'finished' : s.attention ? false : status === 'Running' ? s.running : !s.running && s.status === status);
     if (!group.length) continue;
     list.append(el('h3','',status));
     for (const s of group) {
       const item = el('div','pickup-row');
-      item.append(button(s.title,'card-open',() => { $('pickup-dialog').close(); if (gitOpen || engineeringOpen) selectProjectView(false); select(s); }), el('p','',s.note || 'Add a next step in the handoff note.'));
+      item.append(button(s.title,'card-open',() => { $('pickup-dialog').close(); if (gitOpen || engineeringOpen || usageOpen) selectProjectView(false); select(s); }), el('p','',s.note || 'Add a next step in the handoff note.'));
       list.append(item);
     }
   }
-  if (!sessions.length) list.append(el('p','','Chats with a running task, or marked In progress or Waiting, will appear here.'));
+  if (!sessions.length) list.append(el('p','','Chats that ask you a question, finished recently, have a running task, or are marked In progress or Waiting will appear here.'));
   $('pickup-dialog').showModal();
 });
 $('pickup-close').addEventListener('click', () => $('pickup-dialog').close());
+const usageTotal = u => u.input + u.cacheRead + u.cacheWrite + u.output;
+const fmtCost = v => v == null ? '—' : v < 0.005 ? '<$0.01' : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: v >= 100 ? 0 : 2 }).format(v);
+function sumUsage(entries) {
+  const sum = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0, priced: 0, chats: new Set() };
+  for (const e of entries) {
+    for (const f of ['input', 'cacheRead', 'cacheWrite', 'output']) sum[f] += e[f];
+    const cost = usageCost(e, usagePrice(e.model, data.pricing));
+    if (cost != null) { sum.cost += cost; sum.priced += usageTotal(e); }
+    sum.chats.add(e.key);
+  }
+  sum.total = usageTotal(sum);
+  // A "+" marks totals where some models have no price, so the figure is a floor.
+  sum.estimate = sum.priced ? sum.cost : null;
+  sum.partial = sum.priced > 0 && sum.priced < sum.total;
+  return sum;
+}
+const costLabel = sum => fmtCost(sum.estimate) + (sum.partial ? '+' : '');
+function usageLine(s) {
+  const entries = s.usage?.days || [];
+  if (!entries.length) return '';
+  const sum = sumUsage(entries.map(e => ({ ...e, key: s.key })));
+  const cached = sum.total ? Math.round(sum.cacheRead / sum.total * 100) : 0;
+  const lines = s.usage.linesAdded || s.usage.linesRemoved ? `\nLines +${s.usage.linesAdded} −${s.usage.linesRemoved}` : '';
+  const cost = typeof s.usage.reportedCost === 'number' ? ` · ${fmtCost(s.usage.reportedCost)} reported by Claude` : sum.estimate != null ? ` · ≈ ${costLabel(sum)}` : '';
+  return `\nTokens ${formatTokens(sum.total)} (${cached}% cached) · ${formatTokens(sum.output)} out${s.usage.model ? ' · ' + s.usage.model : ''}${cost}${lines}`;
+}
+function usageDayLabel(day) {
+  if (day === usageDay(Date.now())) return 'Today';
+  if (day === usageDay(Date.now() - 86400000)) return 'Yesterday';
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+function usageCountdown(seconds) {
+  const left = Math.max(0, seconds * 1000 - Date.now()), h = Math.floor(left / 3600000), m = Math.floor(left % 3600000 / 60000);
+  return h >= 48 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function usageGroups(entries, keyOf) {
+  const groups = new Map();
+  for (const e of entries) { const key = keyOf(e); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(e); }
+  return [...groups].map(([key, list]) => [key, sumUsage(list), list]).sort((a, b) => b[1].total - a[1].total);
+}
+function usageAmount(sum, max) {
+  const row = el('span', 'usage-row'); row.append(meter(sum.total, max), document.createTextNode(formatTokens(sum.total))); return row;
+}
+function renderUsage() {
+  for (const tab of document.querySelectorAll('[data-usage-range]')) tab.setAttribute('aria-pressed', String(Number(tab.dataset.usageRange) === usageRange));
+  const scope = project ? data.sessions.filter(s => projectGroupKey(s) === project) : data.sessions;
+  const since = usageRange ? usageDay(Date.now() - (usageRange - 1) * 86400000) : '';
+  const entries = scope.flatMap(s => (s.usage?.days || []).filter(e => e.day >= since).map(e => ({ ...e, key: s.key, provider: s.provider, session: s })));
+  const content = $('usage-content'); content.replaceChildren();
+  const scopeName = project ? data.projectCatalog.find(p => p.key === project)?.name || 'this project' : 'all projects';
+  const periodName = usageRange ? `last ${usageRange} days` : 'all indexed conversations';
+  const sum = sumUsage(entries);
+  const unpriced = [...new Set(entries.filter(e => !usagePrice(e.model, data.pricing)).map(e => e.model || 'unknown model'))];
+  $('usage-status').textContent = [`Tokens recorded in Codex and Claude Code transcripts for ${scopeName}, ${periodName}.`,
+    sum.total ? 'Cost is an API-equivalent estimate from Model pricing; subscription plans are not billed per token.' : '',
+    unpriced.length ? `No price set for ${unpriced.join(', ')}.` : ''].filter(Boolean).join(' ');
+  if (!entries.length) { content.append(el('p', '', 'No token usage recorded yet. Usage appears as Codex and Claude Code write their local transcripts.')); return; }
+  const todaySum = sumUsage(entries.filter(e => e.day === usageDay(Date.now())));
+  const cached = Math.round(sum.cacheRead / (sum.input + sum.cacheRead + sum.cacheWrite || 1) * 100);
+  const stats = el('dl', 'eng-stats');
+  for (const [label, value] of [['Today', formatTokens(todaySum.total)], ['Total tokens', formatTokens(sum.total)], ['Output', formatTokens(sum.output)], ['Served from cache', cached + '%'],
+    ['Estimated cost', costLabel(sum)], ['Conversations', sum.chats.size]]) {
+    const item = el('div', 'eng-stat'); item.append(el('dt', '', label), el('dd', '', String(value))); stats.append(item);
+  }
+  content.append(stats);
+  const limits = data.sessions.filter(s => s.usage?.limits).map(s => s.usage.limits).sort((a, b) => b.at - a.at)[0];
+  if (limits && scope.some(s => s.provider === 'codex')) {
+    content.append(el('h2', '', 'Codex plan'));
+    const rows = [];
+    for (const window of [limits.primary, limits.secondary]) {
+      if (!window || typeof window.used_percent !== 'number') continue;
+      const span = window.window_minutes >= 10080 ? 'Weekly' : window.window_minutes >= 1440 ? `${Math.round(window.window_minutes / 1440)}-day` : `${Math.round(window.window_minutes / 60)}-hour`;
+      const used = Math.round(window.used_percent);
+      const bar = el('span', 'usage-row'); bar.append(meter(used, 100, used >= 90 ? 'warn' : ''), document.createTextNode(used + '% used'));
+      rows.push([`${span} limit`, bar, window.resets_at ? `Resets in ${usageCountdown(window.resets_at)}` : '']);
+    }
+    content.append(engineeringTable([['Window', false], ['Used', false], ['Reset', false]], rows));
+    const credits = limits.credits != null && Number.isFinite(Number(limits.credits)) ? `Credits ${Number(limits.credits).toFixed(2)}` : '';
+    content.append(el('p', 'eng-caption usage-dim', [limits.plan ? `Plan ${limits.plan}` : '', credits, `Reported by Codex ${activityAge(limits.at)}`].filter(Boolean).join(' · ')));
+  }
+  const days = usageGroups(entries, e => e.day).sort((a, b) => b[0].localeCompare(a[0]));
+  const dayMax = days.reduce((max, [, d]) => Math.max(max, d.total), 1);
+  content.append(el('h2', '', 'By day'), engineeringTable([['Day', false], ['Chats', true], ['Input', true], ['Cached', true], ['Output', true], ['Total', false], ['Cost', true]],
+    days.slice(0, usageRange || 60).map(([day, d]) => [usageDayLabel(day), d.chats.size, formatTokens(d.input + d.cacheWrite), formatTokens(d.cacheRead), formatTokens(d.output), usageAmount(d, dayMax), costLabel(d)])));
+  const models = usageGroups(entries, e => e.model || 'unknown model');
+  content.append(el('h2', '', 'By model'), engineeringTable([['Model', false], ['Provider', false], ['Chats', true], ['Input', true], ['Cache write', true], ['Cache read', true], ['Output', true], ['Cost', true]],
+    models.map(([model, m, list]) => [model, [...new Set(list.map(e => providerName(e.provider)))].join(', '), m.chats.size, formatTokens(m.input), formatTokens(m.cacheWrite), formatTokens(m.cacheRead), formatTokens(m.output), fmtCost(m.estimate)])));
+  if (!project) {
+    const projects = usageGroups(entries, e => projectGroupKey(e.session));
+    content.append(el('h2', '', 'By project'), engineeringTable([['Project', false], ['Chats', true], ['Tokens', false], ['Cost', true]],
+      projects.map(([key, p, list]) => [button(list[0].session.project, 'quiet engineering-file', () => chooseProject(key), `Show usage for ${list[0].session.project}`), p.chats.size, usageAmount(p, projects[0][1].total), costLabel(p)])));
+  }
+  const chats = usageGroups(entries, e => e.key).slice(0, 8);
+  content.append(el('h2', '', 'Largest conversations'), engineeringTable([['Conversation', false], ['Project', false], ['Model', false], ['Tokens', false], ['Cost', true]],
+    chats.map(([, c, list]) => { const s = list[0].session; return [button(s.title, 'quiet engineering-file', () => { selectProjectView(false); select(s); }, `Open ${s.title}`), s.project, s.usage.model || '', usageAmount(c, chats[0][1].total), costLabel(c)]; })));
+}
 function renderDetail() {
   const s = data.sessions.find(s => s.key === detailKey); if (!s) return;
   const root = $('detail'); root.replaceChildren();
   const head = el('div', 'detail-head'); head.append(el('span', '', providerName(s.provider)), button('×', '', closeDetail, 'Close details')); root.append(head, el('h2', '', s.title));
   const availableFolders = data.subfolders?.[projectGroupKey(s)] || [];
-  const info = el('div', 'meta', `${s.project}\nCreated ${fullDate(s.createdAt)}\nLast activity ${fullDate(s.updatedAt)}${s.completedAt ? `\nFinished ${fullDate(s.completedAt)}` : ''}`); root.append(info);
+  const info = el('div', 'meta', `${s.project}\nCreated ${fullDate(s.createdAt)}\nLast activity ${fullDate(s.updatedAt)}${s.completedAt ? `\nFinished ${fullDate(s.completedAt)}` : ''}${usageLine(s)}`); root.append(info);
   const actions = el('div', 'detail-actions');
   actions.append(button(s.provider === 'codex' ? 'Codex sidebar' : 'Claude chat', 'primary', () => send({ type: 'open', key: s.key, native: true })));
   if (s.provider === 'codex') actions.append(button('Open beside board', 'quiet', () => send({ type: 'open', key: s.key, editor: true })));
@@ -1422,12 +1565,13 @@ function closeDetail() {
 window.addEventListener('message', e => {
   const m = e.data;
   if (m.type === 'activity' && Array.isArray(m.sessions)) {
-    const activity = new Map(m.sessions.map(s => [s.key, s.running === true]));
-    for (const session of data.sessions) if (activity.has(session.key)) session.running = activity.get(session.key);
-    for (const card of document.querySelectorAll('article.card')) if (activity.has(card.dataset.key)) setCardRunning(card, activity.get(card.dataset.key));
-    syncProjectRunning();
+    const activity = new Map(m.sessions.map(s => [s.key, { running: s.running === true, attention: typeof s.attention === 'string' ? s.attention : '' }]));
+    for (const session of data.sessions) if (activity.has(session.key)) Object.assign(session, activity.get(session.key));
+    for (const card of document.querySelectorAll('article.card')) if (activity.has(card.dataset.key)) { setCardRunning(card, activity.get(card.dataset.key).running); setCardAttention(card, activity.get(card.dataset.key).attention); }
+    syncProjectRunning(); renderSummary();
     return;
   }
+  if (m.type === 'gitSummary' && m.summary && typeof m.summary === 'object') { gitSummary = m.summary; gitBehind = m.behind && typeof m.behind === 'object' ? m.behind : {}; syncProjectGit(); return; }
   if (m.type === 'theme' && ['system', 'pearl', 'dark'].includes(m.theme)) {
     themeMigrated = true;
     theme = m.theme;
@@ -1467,6 +1611,7 @@ window.addEventListener('message', e => {
     // Live refreshes only touch the DOM when the repository actually changed.
     if (live && gitResult && JSON.stringify(gitResult.dashboard) === JSON.stringify(m.dashboard) && gitResult.error === m.error) return;
     gitResult = m; renderGit();
+    if (m.dashboard) { gitSummary = { ...gitSummary, [m.projectKey]: m.dashboard.changes.map(change => change.code) }; syncProjectGit(); }
     if (live && !m.error && gitDiffResult && gitSelection.mode !== 'commit') {
       // A file that was committed or reverted meanwhile falls back to the first remaining change.
       if (gitSelection.file && !m.dashboard.changes.some(change => change.file === gitSelection.file)) { const { file, ...rest } = gitSelection; gitSelection = rest; }
@@ -1547,7 +1692,7 @@ window.addEventListener('message', e => {
     button.disabled = false; button.removeAttribute('aria-busy'); button.textContent = 'Connect agents';
     showNotice(m.text);
   }
-  if (m.type === 'projectPicked' && data.projectCatalog.some(item => item.key === m.key)) chooseProject(m.key);
+  if (m.type === 'projectPicked' && data.projectCatalog.some(item => item.key === m.key)) { chooseProject(m.key); if (m.git) selectProjectView(true); }
 });
 $('search').value = query;
 $('search').addEventListener('input', e => { query = e.target.value; persist(); render(); });
@@ -1560,8 +1705,8 @@ $('refresh').addEventListener('click', () => {
   else send({ type: 'refresh' });
 });
 function selectProjectView(showGit) {
-  if (gitOpen === showGit && !engineeringOpen) return;
-  engineeringOpen = false;
+  if (gitOpen === showGit && !engineeringOpen && !usageOpen) return;
+  engineeringOpen = false; usageOpen = false;
   gitOpen = showGit;
   persist();
   if (gitOpen) requestGit();
@@ -1573,10 +1718,18 @@ $('conversation-switch').addEventListener('click', () => selectProjectView(false
 $('engineering-switch').addEventListener('click', () => {
   if (engineeringOpen) { selectProjectView(false); return; }
   engineeringOpen = true;
-  gitOpen = false;
+  gitOpen = false; usageOpen = false;
   persist();
   render();
 });
+$('usage-switch').addEventListener('click', () => {
+  if (usageOpen) { selectProjectView(false); return; }
+  usageOpen = true; gitOpen = false; engineeringOpen = false;
+  persist();
+  render();
+});
+for (const tab of document.querySelectorAll('[data-usage-range]')) tab.addEventListener('click', () => { usageRange = Number(tab.dataset.usageRange); persist(); renderUsage(); });
+$('usage-pricing').addEventListener('click', () => send({ type: 'settings' }));
 $('engineering-changes').addEventListener('click', () => selectProjectView(true));
 for (const tab of document.querySelectorAll('[data-engineering-view]')) tab.addEventListener('click', () => switchEngineering(tab.dataset.engineeringView));
 $('engineering-search').addEventListener('input', e => updateEngineering({ query: e.target.value, offset: 0 }));
@@ -1649,14 +1802,14 @@ $('cancel-topic').addEventListener('click', () => $('topic-dialog').close());
 $('topic-form').addEventListener('submit', e => { e.preventDefault(); send({ type: 'addTopic', name: $('topic-name').value, keywords: $('topic-keywords').value }); $('topic-dialog').close(); $('topic-form').reset(); });
 document.addEventListener('keydown', e => {
   if (document.querySelector('dialog[open]')) return;
-  if ((gitOpen || engineeringOpen) && project && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === 'g') {
+  if (((gitOpen || engineeringOpen) && project || usageOpen) && e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === 'g') {
     e.preventDefault();
     selectProjectView(false);
     $('conversation-switch').focus();
     return;
   }
   if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
-    if (engineeringOpen && project && $('engineering-filters').hidden) return;
+    if ((engineeringOpen && project && $('engineering-filters').hidden) || usageOpen) return;
     e.preventDefault();
     $(engineeringOpen && project ? 'engineering-search' : 'search').focus();
   }

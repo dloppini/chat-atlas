@@ -268,3 +268,49 @@ test('Commit refuses unresolved conflicts without changing the branch', async t 
   await assert.rejects(runGitOperation(root,'commit',repo.head,repo.branch,{indexVersion:repo.indexVersion,message:'Unresolved'}),/Resolve and stage/);
   assert.equal(git('rev-parse','HEAD'),repo.head);assert.match(git('status','--porcelain'),/UU shared.txt/);
 });
+
+test('Status codes summarize a repository for the sidebar dots and skip non-repositories', async t => {
+  const { readGitStatusCodes } = require('../src/git');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-status-codes-'));
+  const ceiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = path.dirname(root); // The temp folder may sit inside a home-directory repository.
+  t.after(() => { if (ceiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = ceiling; return fs.rm(root, {recursive:true, force:true}); });
+  assert.equal(await readGitStatusCodes(root), null);
+  const git = (...args) => execFileSync('git', args, {cwd:root, stdio:'pipe'});
+  git('init','-b','main');
+  assert.deepEqual(await readGitStatusCodes(root), []);
+  for (const name of ['a.txt','b.txt']) await fs.writeFile(path.join(root, name), 'x\n');
+  git('add','.'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Base');
+  await fs.writeFile(path.join(root, 'a.txt'), 'y\n');
+  await fs.rm(path.join(root, 'b.txt'));
+  await fs.writeFile(path.join(root, 'c.txt'), 'z\n');
+  await fs.mkdir(path.join(root, 'new'));
+  for (const name of ['d.txt','e.txt']) await fs.writeFile(path.join(root, 'new', name), 'w\n');
+  // One code per file, untracked folders expanded, so the sidebar can count them.
+  assert.deepEqual((await readGitStatusCodes(root)).sort(), [' D',' M','??','??','??']);
+});
+
+test('Behind main counts remote main commits missing from HEAD on main and feature branches', async t => {
+  const { readBehindMain } = require('../src/git');
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-behind-'));
+  const ceiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = path.dirname(base);
+  t.after(() => { if (ceiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = ceiling; return fs.rm(base, {recursive:true, force:true}); });
+  const remote = path.join(base, 'remote.git'), a = path.join(base, 'a'), b = path.join(base, 'b');
+  const git = (cwd, ...args) => execFileSync('git', ['-c','user.name=Fixture','-c','user.email=fixture@example.invalid', ...args], {cwd, stdio:'pipe'}).toString().trim();
+  git(base, 'init', '--bare', '-b', 'main', remote);
+  git(base, 'clone', remote, a); git(a, 'checkout', '-B', 'main');
+  await fs.writeFile(path.join(a, 'x.txt'), '1\n'); git(a, 'add', '.'); git(a, 'commit', '-m', 'one'); git(a, 'push', '-u', 'origin', 'main');
+  git(base, 'clone', remote, b);
+  assert.equal(await readBehindMain(base, false), null, 'Not a repository');
+  const start = await readBehindMain(b, false);
+  assert.equal(start.base, 'origin/main'); assert.equal(start.behind, 0);
+  for (const n of [2, 3]) { await fs.writeFile(path.join(a, 'x.txt'), `${n}\n`); git(a, 'commit', '-am', String(n)); }
+  git(a, 'push');
+  assert.equal((await readBehindMain(b, false)).behind, 0, 'Without fetching, local refs are unchanged');
+  const fetched = await readBehindMain(b, true);
+  assert.equal(fetched.behind, 2); assert.equal(fetched.hash, git(a, 'rev-parse', 'HEAD'));
+  git(b, 'checkout', '-b', 'feature');
+  assert.equal((await readBehindMain(b, false)).behind, 2, 'A feature branch compares with the remote main');
+  assert.equal(git(b, 'status', '--porcelain'), '', 'Fetching leaves the working tree untouched');
+});

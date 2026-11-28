@@ -9,16 +9,14 @@
     <div class="brand">
       <img class="brand-icon" src="{{iconUri}}" width="32" height="32" alt="">
       <span>Chat Atlas<small id="app-version" class="brand-version">v{{version}}</small></span>
+      <button id="new-project" class="project-add" type="button" aria-label="Create project" title="Create project">+</button>
       <button id="close-projects" type="button" aria-label="Close projects">×</button>
     </div>
     <button class="nav active" id="all-projects">All projects <span id="total">0</span></button>
-    <div class="project-heading">
+    <div class="project-heading project-tools">
       <h2>Projects</h2>
-      <button id="new-project" class="project-add" type="button" aria-label="Create project" title="Create project">+</button>
-    </div>
-    <div class="project-tools">
       <select id="project-sort" aria-label="Project sort order"><option value="alphabetical">A–Z</option><option value="manual">Manual</option></select>
-      <button id="subfolder-toggle" class="subfolder-toggle" type="button" aria-pressed="false">Show subfolders</button>
+      <button id="subfolder-toggle" class="subfolder-toggle" type="button" aria-pressed="false" title="Show subfolders under each project">Subfolders</button>
     </div>
     <div id="projects"></div>
     <button id="hidden-projects" class="hidden-projects" type="button" hidden>Hidden projects</button>
@@ -36,10 +34,12 @@
           <p class="subtitle" id="summary">Reading local conversations…</p>
           <div id="project-location" class="project-location" hidden>
             <span id="project-folder-path"></span>
-            <button id="open-project-folder" class="quiet" type="button" hidden>Open in Explorer</button>
-            <button id="rename-project" class="quiet" type="button">Rename project…</button>
-            <button id="pickup" class="quiet" type="button">Project pickup</button>
-            <button id="link-project-folder" class="quiet" type="button" hidden>Link folder…</button>
+            <div class="project-commands">
+              <button id="open-project-folder" class="quiet" type="button" hidden><span class="full-label">Open in Explorer</span><span class="short-label">Explorer</span></button>
+              <button id="rename-project" class="quiet" type="button"><span class="full-label">Rename project…</span><span class="short-label">Rename…</span></button>
+              <button id="pickup" class="quiet" type="button"><span class="full-label">Project pickup</span><span class="short-label">Pickup</span></button>
+              <button id="link-project-folder" class="quiet" type="button" hidden>Link folder…</button>
+            </div>
           </div>
         </div>
       </div>
@@ -49,6 +49,7 @@
           <button id="git-switch" type="button" aria-pressed="false" aria-controls="git-dashboard" aria-label="Git" title="Show repository branches, commit graph and local changes"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8M18 9a9 9 0 0 1-9 9"/></svg> Git</button>
         </div>
         <button id="engineering-switch" class="icon-button" type="button" aria-pressed="false" aria-controls="engineering-panel" aria-label="Engineering" title="Engineering: architecture, quality and impact" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5h18M6 10.5l1.4-5.2A1.5 1.5 0 0 1 9.2 4.2L12 5l2.8-.8a1.5 1.5 0 0 1 1.8 1.1l1.4 5.2"/><circle cx="7.5" cy="16" r="3"/><circle cx="16.5" cy="16" r="3"/><path d="M10.5 16a1.5 1.5 0 0 1 3 0"/></svg></button>
+        <button id="usage-switch" class="icon-button" type="button" aria-pressed="false" aria-controls="usage-panel" aria-label="Usage" title="Usage: tokens, models and estimated cost"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M7 16V9M12 16V5M17 16v-4"/></svg></button>
         <button id="new-chat" class="quiet" type="button" hidden>New chat</button>
         <div class="header-utilities">
           <button id="settings" class="icon-button" type="button" aria-label="Settings" title="Open Chat Atlas settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h7m5 0h4M4 17h2m5 0h9"/><circle cx="13.5" cy="7" r="2.5"/><circle cx="8.5" cy="17" r="2.5"/></svg></button>
@@ -96,6 +97,20 @@
         <label id="engineering-depth-label">Depth <select id="engineering-depth"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></label>
       </div>
       <div id="engineering-content"></div>
+    </section>
+    <section id="usage-panel" aria-label="Usage" hidden>
+      <div class="engineering-toolbar">
+        <div class="segments" role="group" aria-label="Usage period">
+          <button type="button" data-usage-range="7" aria-pressed="false">7 days</button>
+          <button type="button" data-usage-range="30" aria-pressed="true">30 days</button>
+          <button type="button" data-usage-range="0" aria-pressed="false">All time</button>
+        </div>
+        <div class="engineering-actions">
+          <button type="button" class="quiet" id="usage-pricing" title="Edit the per-model prices used for the estimated cost">Model pricing…</button>
+        </div>
+      </div>
+      <p id="usage-status" role="status"></p>
+      <div id="usage-content"></div>
     </section>
     <section id="git-dashboard" aria-label="Git dashboard" hidden></section>
     <section id="board" class="board" aria-label="Conversations"></section>

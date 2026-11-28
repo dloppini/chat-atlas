@@ -34,7 +34,7 @@ The extension stores up to 12 versioned snapshots in VS Code global state, keyed
 
 - The nearest Git worktree is associated with the linked folder. Remote and virtual projects and board-only labels have no analysis. Non-Git folders show an explicit state.
 - Local JS/TS analysis uses literal import references and the closest local tsconfig.json or jsconfig.json compiler options. Extended configs, runtime relationships, Git submodules, package-manager-specific resolution and historical source graphs remain outside its coverage. The Git summary disables executable attribute filters, which can affect dirty counts for filtered paths.
-- The analyzer considers at most 4,500 files, 512 KiB per source, 24 MiB of input and 18,000 references. Browser queries page the file list and limit dependents to 100 nodes over at most six levels.
+- The analyzer considers at most 4,500 files, 4 MiB per source, 24 MiB of input and 18,000 references. Browser queries page the file list and limit dependents to 100 nodes over at most six levels.
 - Quality metrics are static: complexity counts decision points (if, loops, case, catch, &&, ||, ??) per file and function body; test reach follows imports from test files; entry points come from package.json main, bin, exports and script paths. Files loaded at runtime (HTML, config, dynamic import) can appear without importers or untested. Commit counts read at most 400 commits from the last 180 days. Snapshots taken before this release need a refresh to show the map and Quality view.
 - Explicit refreshes start a scan. Two projects can analyze concurrently. A canceled, interrupted or failed scan preserves prior evidence. OpenSpec, external health analyzers, check execution and the portfolio are later work.
 

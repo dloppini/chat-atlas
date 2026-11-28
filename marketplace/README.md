@@ -33,6 +33,9 @@ Analysis uses local Git and the TypeScript compiler shipped with compatible desk
 - See a running spinner and frame for unfinished tasks. Activity checks update every two seconds; completion and interruption stop the indicator when detected. The inactivity timeout is configurable.
 - Start or resume chats in the current window. New Claude chats open in the sidebar. For another project, append your task below the folder instruction and press Send. Atlas uses the sent instruction to file the card. Existing chats resume by original ID and recorded directory. Its native toolbar and authentication remain in control. Retrieve a closed chat from its Atlas card; new cards appear after the first message.
 - See a spinner beside sidebar project names while their chats have running tasks.
+- See **Asks you** when an agent is waiting for your answer and **Finished** when a task completed since you last looked, with an optional VS Code notification and Open chat action.
+- See uncommitted new, modified and deleted file counts beside each project, and get a notification when your branch is behind the remote main so you know to pull.
+- Track token usage and estimated cost in **Usage**: by day, model, project and conversation, read from local Codex and Claude Code transcripts, with Codex plan limits when reported. Prices are configurable per model; nothing is sent anywhere.
 
 ## Feedback
 
@@ -68,5 +71,5 @@ Released under the MIT license included in LICENSE.txt.
 
 - Right-click a local file in Explorer and choose **Chat Atlas: Find Chats for This File**. Select a result to resume the chat. Recorded edit and read actions appear before path mentions.
 - Open a project and choose **Project pickup** for chats with a running task and those marked In progress or Waiting. Edit the next step in the chat’s handoff note.
-- Search the board and choose **Passages** on a result, or use **Find passage…** in Details. Pick a message to open the match and the messages on either side in an editor.
+- Search matches the start of words in a chat's messages, title and note, so `test` finds "tests" and "testing", while `3D` does not match hashes or colours such as `3dd2f`. Choose **Last match** on a result to open the last message containing the words, with the messages on either side, in an editor; **Find passage…** in Details lists every match, newest first.
 - In Details, choose **Hand off…**, select an excerpt or write a decision, choose file paths, and enter the next step. Review the preview, then **Copy and open chat**. Paste into the new provider draft and send. Atlas links the chats in Details when it indexes the opening message with the source line.

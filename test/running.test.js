@@ -184,3 +184,36 @@ test('Explorer marks only project files and clears them after the last active ch
   activity.update([]);
   assert.equal(activity.lookup(uri(path.join(cwd, 'board.js'))), undefined);
 });
+
+test('A pending question marks the chat as asking you until it is answered, superseded or interrupted', () => {
+  const ask = response('function_call', { name: 'request_user_input_async', call_id: 'ask-1' });
+  const answer = response('function_call_output', { call_id: 'ask-1' });
+  const prompt = response('message', { role: 'user', content: [{ type: 'input_text', text: 'Go on' }] });
+  const attention = (provider, records) => {
+    const session = parseSession(provider, `${id}.jsonl`, provider === 'codex' ? [meta, ...records] : [user, ...records], stat);
+    return publicSessions([session], reconcile([session], {}), now)[0].attention;
+  };
+  assert.equal(attention('codex', [ask]), 'question');
+  assert.equal(attention('codex', [ask, event('task_complete')]), 'question'); // Codex asks asynchronously; the turn may end first.
+  assert.equal(attention('codex', [ask, answer, event('task_complete')]), 'finished');
+  assert.equal(attention('codex', [ask, prompt]), '');
+  assert.equal(attention('codex', [ask, event('turn_aborted')]), 'finished');
+  const claudeAsk = claude([{ type: 'tool_use', id: 'toolu_1', name: 'AskUserQuestion', input: {} }], 'tool_use');
+  const claudeAnswer = { type: 'user', sessionId: id, timestamp: stamp(now), message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Option A' }] } };
+  assert.equal(attention('claude', [claudeAsk]), 'question');
+  assert.equal(attention('claude', [claudeAsk, claudeAnswer]), '');
+  assert.equal(attention('claude', [claudeAsk, { ...user, message: { content: '[Request interrupted by user]' } }]), 'finished');
+});
+
+test('A finished turn asks for review until the card is opened, and the flag expires after the running timeout', () => {
+  const finished = parseSession('codex', `${id}.jsonl`, [meta, response('message', { role: 'user', content: [{ type: 'input_text', text: 'Fix it' }] }), event('task_complete', now - 60000)], stat);
+  const state = reconcile([finished], {});
+  assert.equal(publicSessions([finished], state, now)[0].attention, 'finished');
+  assert.equal(publicSessions([finished], state, now + 2 * 3600000)[0].attention, '');
+  state.cards[finished.key].seenAt = now;
+  assert.equal(publicSessions([finished], state, now)[0].attention, '');
+  state.cards[finished.key].seenAt = 0; state.cards[finished.key].status = 'Done';
+  assert.equal(publicSessions([finished], state, now)[0].attention, '');
+  const active = parseSession('codex', `${id}.jsonl`, [meta, event('task_started')], stat);
+  assert.equal(publicSessions([active], reconcile([active], {}), now)[0].attention, '');
+});
