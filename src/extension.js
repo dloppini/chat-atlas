@@ -139,6 +139,7 @@ function activate(context) {
   };
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
   const pricing = () => { const value = vscode.workspace.getConfiguration('chatAtlas').get('modelPricing'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; };
+  const sentSearch = new Map();
   const publish = () => {
     const sessions = visibleSessions();
     activity.update(highlight() ? sessions : []);
@@ -147,7 +148,12 @@ function activate(context) {
     const today = usageDay(Date.now()), used = sessions.flatMap(s => s.usage?.days || []).filter(d => d.day === today).reduce((n, d) => n + d.input + d.cacheRead + d.cacheWrite + d.output, 0);
     status.text = used ? `$(layout) Chat Atlas · ${formatTokens(used)} today` : '$(layout) Chat Atlas';
     status.tooltip = used ? 'Open your conversation board · Tokens used today across Codex and Claude Code, including cached input' : 'Open your conversation board';
-    post({ type: 'data', ...current, sessions, topics: state.topics || [], projectCatalog: catalog(), sidebarPreferences, subfolders, busy, pricing: pricing() });
+    // Search text is ~90% of the payload and rarely changes, so each session's copy is sent only when it differs from the last one the board received.
+    const outgoing = sessions.map(s => {
+      if (sentSearch.get(s.key) !== s.searchText) { sentSearch.set(s.key, s.searchText); return s; }
+      const { searchText, ...rest } = s; return rest;
+    });
+    post({ type: 'data', ...current, sessions: outgoing, topics: state.topics || [], projectCatalog: catalog(), sidebarPreferences, subfolders, busy, pricing: pricing() });
   };
   // One toast per transition into "asks you" or "finished"; the first publish only records the baseline.
   let announced = null;
@@ -278,6 +284,9 @@ function activate(context) {
     let root;
     try { root = (await readOnlyGit(project.cwd, ['rev-parse', '--show-toplevel'])).trim(); } catch { return; }
     if (gitWatchProject !== projectKey) return;
+    // A repository at the home folder or a drive root would watch the whole profile; refresh it manually instead.
+    const fromRoot = path.relative(path.resolve(root), os.homedir());
+    if (!fromRoot || (!fromRoot.startsWith('..') && !path.isAbsolute(fromRoot))) return;
     const poll = () => { gitWatcher?.close(); gitWatcher = undefined; gitPoll ||= setInterval(notifyGitChanged, 5000); };
     try {
       gitWatcher = watch(root, { recursive: true }, (_event, filename) => {
@@ -313,7 +322,7 @@ function activate(context) {
     }));
     return found;
   }
-  let refreshTask;
+  let refreshTask, quickScanned = false;
   function refresh() {
     if (disposed) return;
     if (!refreshTask) refreshTask = scan().finally(() => { refreshTask = undefined; });
@@ -322,7 +331,13 @@ function activate(context) {
   async function scan() {
     busy = true; publish();
     const checked = [...discoveryFiles]; discoveryFiles.clear();
-    try { current = await index.scan(settings()); for (const file of checked) if (!current.sessions.some(s => s.file === file)) unindexedFiles.add(file); const sessions = locatedSessions(); subfolders = await scanSubfolders(sessions); reconcile(sessions, state); await save(); }
+    const apply = async result => { current = result; const sessions = locatedSessions(); subfolders = await scanSubfolders(sessions); reconcile(sessions, state); await save(); };
+    try {
+      // The first scan shows cards from sampled transcripts in about a second, then reads large ones in full for search and usage.
+      if (!quickScanned) { quickScanned = true; await apply(await index.scan({ ...settings(), quick: true })); if (!disposed) publish(); }
+      await apply(await index.scan(settings()));
+      for (const file of checked) if (!current.sessions.some(s => s.file === file)) unindexedFiles.add(file);
+    }
     catch (e) { current.errors = [`Refresh failed: ${e.message}`]; }
     finally { busy = false; if (!disposed) { publish(); if (panel) watchHistory(); publishGitSummary(); } }
   }
@@ -417,7 +432,7 @@ function activate(context) {
         if (['pearl', 'dark'].includes(m.legacyTheme) && config.inspect('theme')?.globalValue === undefined) {
           await config.update('theme', m.legacyTheme, vscode.ConfigurationTarget.Global);
         }
-        sendTheme(); boardReady = true; publish(); presentFolder(); presentProject(); await refresh(); return; }
+        sendTheme(); boardReady = true; sentSearch.clear(); publish(); presentFolder(); presentProject(); await refresh(); return; }
       if (m.type === 'refresh') { await refresh(); return; }
       if (m.type === 'registerMcp') {
         const text = await registerMcp().catch(error => error.message);
@@ -592,8 +607,9 @@ function activate(context) {
         return;
       }
       if (m.type === 'select') {
-        card.seenAt = s.updatedAt; await save();
-        post({ type: 'detail', key: s.key, messages: s.messages, sampled: s.sampled }); publish();
+        // Show the detail first; persisting seenAt does not need to delay it.
+        card.seenAt = s.updatedAt;
+        post({ type: 'detail', key: s.key, messages: s.messages, sampled: s.sampled }); publish(); await save();
       }
       if (m.type === 'browseSessionFiles') {
         const available = subfolders[originalProjectKey(s)] || [];

@@ -532,3 +532,16 @@ test('Attention notifications fire once per transition after the baseline publis
   const published = h.messages.filter(m => m.type === 'data').at(-1).sessions.find(s => s.key === 'codex:second');
   assert.equal(published.attention, 'finished');
 });
+
+test('Board updates send each chat\'s search text only when it changed or the board reloaded', async t => {
+  const session = { key: 'codex:search', project: 'P', cwd: '/p', provider: 'codex', title: 'Chat', preview: '', createdAt: 1, updatedAt: 2, searchText: 'needle' };
+  const h = await extensionHarness(t, {}, [session]);
+  await h.send({ type: 'refresh' });
+  assert.equal('searchText' in h.latest().sessions[0], false);
+  h.setSessions([{ ...session, searchText: 'needle and more' }]);
+  await h.send({ type: 'refresh' });
+  assert.equal(h.latest().sessions[0].searchText, 'needle and more');
+  const before = h.messages.length;
+  await h.send({ type: 'ready' });
+  assert.equal(h.messages.slice(before).find(m => m.type === 'data').sessions[0].searchText, 'needle and more');
+});

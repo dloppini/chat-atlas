@@ -2,18 +2,38 @@
 const { execFile, spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { StringDecoder } = require('node:string_decoder');
+// On Windows `git` is a launcher that starts the real git.exe; killing only the launcher (Node's own timeout/abort)
+// leaves that git.exe running orphaned, so timeouts and cancels end the whole process tree.
+function limit(child, timeout, signal) {
+  if (!child?.once) return;
+  const stop = reason => {
+    if (child.exitCode != null || child.signalCode != null || child.stopped) return;
+    child.stopped = reason;
+    if (process.platform === 'win32' && child.pid) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => child.kill());
+    else child.kill();
+  };
+  const timer = setTimeout(stop, timeout, 'timeout'), abort = () => stop('abort');
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  child.once('close', () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); });
+}
+const stoppedMessage = reason => reason === 'abort' ? 'Git was canceled.' : 'Git timed out. Refresh repository status before retrying.';
 const run = (cwd, args, timeout = 15000, extraEnv, signal) => new Promise((resolve, reject) => {
-  execFile('git', ['--no-pager', '--no-optional-locks', ...args], { cwd, encoding: 'utf8', timeout, signal, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', ...extraEnv }, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
-    if (error) reject(Object.assign(new Error(error.code === 'ENOENT' ? 'Git is unavailable. Install Git and restart VS Code.' : (error.killed ? 'Git timed out. Refresh repository status before retrying.' : stderr || error.message).trim()), { code: error.code }));
+  let child;
+  child = execFile('git', ['--no-pager', '--no-optional-locks', ...args], { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', ...extraEnv }, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    const stopped = child?.stopped;
+    if (error) reject(Object.assign(new Error(error.code === 'ENOENT' ? 'Git is unavailable. Install Git and restart VS Code.' : (stopped || error.killed ? stoppedMessage(stopped) : stderr || error.message).trim()), { code: error.code }));
     else resolve(stdout);
   });
+  limit(child, timeout, signal);
 });
 function readPatch(cwd, args) {
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['--no-pager', '--no-optional-locks', ...args], {
-      cwd, timeout:15000, windowsHide:true, stdio:['ignore','pipe','pipe'],
+      cwd, windowsHide:true, stdio:['ignore','pipe','pipe'],
       env:{...process.env, GIT_TERMINAL_PROMPT:'0', GCM_INTERACTIVE:'Never'}
     });
+    limit(child, 15000);
     const decoder = new StringDecoder('utf8');
     let patch = '', stderr = '', remaining = 512 * 1024, truncated = false;
     // Drain the full stream so truncation never masks a later Git failure.
@@ -27,7 +47,7 @@ function readPatch(cwd, args) {
     child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(0, 64 * 1024); });
     child.on('error', error => reject(new Error(error.code === 'ENOENT' ? 'Git is unavailable. Install Git and restart VS Code.' : error.message)));
     child.on('close', (code, signal) => {
-      if (code !== 0) reject(new Error(child.killed ? 'Git timed out. Refresh repository status before retrying.' : stderr.trim() || `Git diff failed (${signal || code}).`));
+      if (code !== 0) reject(new Error(child.stopped || child.killed ? stoppedMessage(child.stopped) : stderr.trim() || `Git diff failed (${signal || code}).`));
       else resolve({patch:patch + (truncated ? '' : decoder.end()), truncated});
     });
   });
@@ -265,8 +285,15 @@ async function readEngineeringGit(cwd, signal) {
     statusFingerprint: createHash('sha256').update(status).digest('hex') };
 }
 // One porcelain code per changed file, as the Git view lists them, so the sidebar can count new/modified/deleted. null when not a repository.
-async function readGitStatusCodes(cwd) {
-  const status = await readOnlyGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all']).catch(() => null);
+// A folder inside a huge repository (e.g. one at the user's home) makes every status walk the whole tree;
+// after one timeout or overflow it is skipped for 30 minutes instead of rescanned every refresh.
+const slowStatus = new Map();
+async function readGitStatusCodes(cwd, now = Date.now()) {
+  if (slowStatus.get(cwd) > now) return null;
+  const status = await run(cwd, ['-c', 'core.fsmonitor=false', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all'], 5000, { GIT_NO_LAZY_FETCH: '1' }).catch(error => {
+    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || /timed out/i.test(error.message)) slowStatus.set(cwd, now + 1800000);
+    return null;
+  });
   return status === null ? null : parseGitChanges(status).map(change => change.code);
 }
 // Checked-out branch for the sidebar: its short name, or `detached <short hash>`; '' without a commit or repository.

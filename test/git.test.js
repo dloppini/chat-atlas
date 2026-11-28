@@ -70,7 +70,7 @@ test('Streamed previews still report late Git failures, timeouts and missing exe
   const source = await fs.readFile(path.join(__dirname,'../src/git.js'),'utf8');
   for (const failure of ['late','timeout','missing']) {
     const module = {exports:{}};
-    require('node:vm').runInNewContext(source, {module,process,require:name => name === 'node:child_process' ? {
+    require('node:vm').runInNewContext(source, {module,process,setTimeout,clearTimeout,require:name => name === 'node:child_process' ? {
       execFile: (command,args,options,callback) => callback(null,args.includes('--show-toplevel') ? '/fixture' : 'M\0file.txt\0',''),
       spawn: () => {
         const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
@@ -330,4 +330,18 @@ test('Behind main counts remote main commits missing from HEAD on main and featu
   git(b, 'checkout', '-b', 'feature');
   assert.equal((await readBehindMain(b, false)).behind, 2, 'A feature branch compares with the remote main');
   assert.equal(git(b, 'status', '--porcelain'), '', 'Fetching leaves the working tree untouched');
+});
+
+test('Canceling a Git read ends the real git.exe, not only the Windows launcher', async () => {
+  const { readOnlyGit } = require('../src/git');
+  const marker = `atlas-orphan-${process.pid}-${Date.now()}`;
+  const controller = new AbortController();
+  // hash-object --stdin waits on the open stdin pipe until it is stopped.
+  const pending = readOnlyGit(os.tmpdir(), ['hash-object', '--stdin', `--path=${marker}`], controller.signal);
+  setTimeout(() => controller.abort(), 500);
+  await assert.rejects(pending, /canceled/);
+  if (process.platform !== 'win32') return;
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const left = execFileSync('powershell.exe', ['-NoProfile', '-Command', `@(Get-CimInstance Win32_Process -Filter "Name='git.exe'" | Where-Object { $_.CommandLine -like '*${marker}*' }).Count`]).toString().trim();
+  assert.equal(left, '0');
 });

@@ -575,6 +575,10 @@ footer{border-top-color:var(--hairline);font-size:11px}
 .timeline:not(.focused) .column-cards{border:1px solid var(--hairline);border-radius:var(--r-card);background:var(--card);overflow:hidden}
 .timeline:not(.focused) .card{background:transparent;border-bottom-color:var(--hairline);padding-inline:14px}
 .timeline:not(.focused) .card:hover{background:color-mix(in srgb,var(--text) 3%,transparent)}
+/* Chats active in the last two hours: a translucent blue wash, also on timeline rows; a stronger wash on hover. */
+.board .card.recent:not(.batch-selected){--recent-wash:color-mix(in srgb,var(--vscode-charts-blue,#58a9df) 12%,transparent);background:linear-gradient(var(--recent-wash),var(--recent-wash)),var(--card)}
+.timeline:not(.focused) .card.recent:not(.batch-selected){background:var(--recent-wash)}
+.board .card.recent:not(.batch-selected):hover{--recent-wash:color-mix(in srgb,var(--vscode-charts-blue,#58a9df) 17%,transparent)}
 .empty-state{border-color:var(--hairline);border-radius:14px}
 .detail{border-left-color:var(--hairline);padding:22px 20px}
 .detail h2{font-size:19px;font-weight:700;letter-spacing:-.015em}

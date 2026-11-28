@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.60 - 28 November 2026
+
+- Keep your computer responsive: when a Git check times out or is canceled, Chat Atlas now ends the real `git.exe` on Windows, not only its launcher, so slow repositories no longer pile up background Git processes. A project inside a very large repository, such as one accidentally created in your home folder, is skipped by the sidebar Git check for 30 minutes after a timeout, and the Git view no longer watches a repository at your home folder or a drive root.
+- Use less CPU while agents work: a growing chat is read only from where Chat Atlas last stopped, so a busy 77 MB transcript costs about 35 ms per update instead of about 2 seconds.
+- Open the board faster: after VS Code starts, chats appear in about a second while large transcripts finish loading in the background for search, file evidence and usage.
+- Switch chats faster: board updates resend a chat's search text only when it changed, and Details opens before your changes are saved.
+- Spot recent work: chats active in the last two hours have a light blue background.
+
 ## 0.1.59 - 28 November 2026
 
 - Use less CPU while agents work: changes to subagent transcripts no longer trigger a full board rescan and a Git status round for every linked project. Chat Atlas now checks a transcript once, and skips it from then on if it isn't a chat.

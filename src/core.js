@@ -198,15 +198,38 @@ function addUsage(index, model, timestamp, tokens) {
   for (const field of ['input', 'cacheRead', 'cacheWrite', 'output']) entry[field] += Math.max(0, Number(tokens[field]) || 0);
   index.usage.set(key, entry);
 }
+// Leaves the index untouched so an incrementally extended index can be summarized again.
 function usageSummary(index) {
-  for (const { model, timestamp, usage: u } of index.claudeUsage?.values() || []) {
-    index.model = model || index.model;
-    addUsage(index, model, timestamp, { input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens });
+  const totals = { usage: new Map([...(index.usage || [])].map(([key, entry]) => [key, { ...entry }])) };
+  let model = index.model;
+  for (const { model: claudeModel, timestamp, usage: u } of index.claudeUsage?.values() || []) {
+    model = claudeModel || model;
+    addUsage(totals, claudeModel, timestamp, { input: u.input_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens, output: u.output_tokens });
   }
-  const days = [...(index.usage?.values() || [])].filter(entry => entry.input + entry.cacheRead + entry.cacheWrite + entry.output > 0);
+  const days = [...totals.usage.values()].filter(entry => entry.input + entry.cacheRead + entry.cacheWrite + entry.output > 0);
   const c = index.costState;
   const reported = c ? { reportedCost: c.totalCostUSD, linesAdded: c.totalLinesAdded || 0, linesRemoved: c.totalLinesRemoved || 0 } : {};
-  return days.length || index.limits || c ? { days, model: index.model || '', ...reported, ...(index.limits ? { limits: index.limits } : {}) } : undefined;
+  return days.length || index.limits || c ? { days, model: model || '', ...reported, ...(index.limits ? { limits: index.limits } : {}) } : undefined;
+}
+// Indexes the complete lines between index.offset and size, then advances offset past them,
+// so a growing transcript is read once overall instead of in full on every append.
+async function indexAppended(index, provider, file, size) {
+  if (size <= index.offset) return;
+  const input = createReadStream(file, { start: index.offset, end: size - 1 });
+  let pending = Buffer.alloc(0);
+  const take = line => {
+    let record;
+    try { record = JSON.parse(line.toString('utf8')); } catch { return false; }
+    if (record && typeof record === 'object') indexRecord(index, provider, record);
+    return true;
+  };
+  for await (const chunk of input) {
+    let buffer = pending.length ? Buffer.concat([pending, chunk]) : chunk, start = 0;
+    for (let end; (end = buffer.indexOf(10, start)) >= 0; start = end + 1) take(buffer.subarray(start, end));
+    index.offset += start; pending = buffer.subarray(start);
+  }
+  // A final line without a newline counts only once it parses; a half-written one is read again next time.
+  if (pending.length && take(pending)) index.offset += pending.length;
 }
 function indexRecord(index, provider, record) {
   const message = searchableMessage(provider, record);
@@ -388,13 +411,19 @@ async function walk(folder, depth = 0) {
 }
 class SessionIndex {
   cache = new Map();
-  async readSession(provider, file, stat) {
+  // quick skips the first full read of a large transcript (search, file evidence and usage then cover only its sampled head and tail);
+  // a later non-quick read completes it, and transcripts already indexed keep updating incrementally either way.
+  async readSession(provider, file, stat, quick = false) {
     let cached = this.cache.get(file);
-    if (!cached || cached.mtime !== stat.mtimeMs || cached.size !== stat.size) {
+    if (!cached || cached.mtime !== stat.mtimeMs || cached.size !== stat.size || (cached.partial && !quick)) {
       const session = parseSession(provider, file, await sample(file, stat.size), stat);
-      if (session?.sampled) {
-        const history = { parts:new Set(), files:new Map(), cwd:session.cwd };
-        for await (const record of transcriptRecords(file)) indexRecord(history, provider, record);
+      let history, partial = false;
+      if (session?.sampled && quick && !cached?.history) partial = true;
+      else if (session?.sampled) {
+        // Transcripts are append-only; a shrink or a different session in the file starts over.
+        history = cached?.history;
+        if (!history || cached.session?.id !== session.id || stat.size < history.offset) history = { parts:new Set(), files:new Map(), cwd:session.cwd, offset:0 };
+        await indexAppended(history, provider, file, stat.size);
         session.searchText = [...history.parts].join('\n');
         session.fileEvidence = history.files;
         session.usage = usageSummary(history);
@@ -419,7 +448,7 @@ class SessionIndex {
         if (grew && newActivity) session.activeTurnAt = Date.now();
         else if (evidenceAt === cached.evidenceAt && cached.session.activeTurnSignal === true) session.activeTurnAt = cached.session.activeTurnAt;
       }
-      cached = { mtime: stat.mtimeMs, size: stat.size, session, evidenceAt };
+      cached = { mtime: stat.mtimeMs, size: stat.size, session, evidenceAt, history, partial };
       this.cache.set(file, cached);
     }
     return cached.session;
@@ -430,7 +459,7 @@ class SessionIndex {
       refreshed.push(...await Promise.all(sessions.slice(start, start + 32).map(async session => {
         try {
           const stat = await fs.stat(session.file);
-          const latest = await this.readSession(session.provider, session.file, stat);
+          const latest = await this.readSession(session.provider, session.file, stat, true);
           if (latest?.id === session.id) return { ...session, activeFiles: latest.activeFiles, activeTurnSignal: latest.activeTurnSignal, activeTurnAt: latest.activeTurnAt, activeTurnClosed: latest.activeTurnClosed, question: latest.question, lastWriteAt: latest.lastWriteAt };
         } catch { /* Keep the prior observation during rotation or a partial write. */ }
         return session;
@@ -438,7 +467,7 @@ class SessionIndex {
     }
     return refreshed;
   }
-  async scan({ codexHome, claudeHome, maxSessions = 1000 }) {
+  async scan({ codexHome, claudeHome, maxSessions = 1000, quick = false }) {
     const sessions = [], sources = [], errors = [];
     for (const [provider, home, suffix] of [['codex', codexHome, 'sessions'], ['claude', claudeHome, 'projects']]) {
       const folder = path.join(home, suffix);
@@ -457,7 +486,7 @@ class SessionIndex {
         for (let start = 0; start < selected.length; start += 12) {
           await Promise.all(selected.slice(start, start + 12).map(async ({ file, stat }) => {
             try {
-              const session = await this.readSession(provider, file, stat);
+              const session = await this.readSession(provider, file, stat, quick);
               if (session) {
                 const s = { ...session }, title = titles.get(s.id);
                 s.title = conversationTitle(title?.thread_name) || s.title;

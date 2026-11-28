@@ -48,6 +48,19 @@ test('Search reads the omitted middle of large transcripts, caches it and update
   const next = await index.readSession('codex', file, await fs.stat(file));
   assert.ok(next.searchText.includes('middleonlyneedle'));
   assert.ok(next.searchText.includes('appendedneedle'));
+  // Appends are indexed incrementally: a half-written line waits for its newline, and usage is not counted twice.
+  const usage = { type: 'event_msg', timestamp: '2026-10-01T12:05:00Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } } };
+  const line = JSON.stringify(prompt('SplitNeedle'));
+  await fs.appendFile(file, JSON.stringify(usage) + '\n' + line.slice(0, 20));
+  const partial = await index.readSession('codex', file, await fs.stat(file));
+  assert.ok(!partial.searchText.includes('splitneedle'));
+  await fs.appendFile(file, line.slice(20) + '\n');
+  const done = await index.readSession('codex', file, await fs.stat(file));
+  const fresh = await new SessionIndex().readSession('codex', file, await fs.stat(file));
+  assert.ok(done.searchText.includes('splitneedle'));
+  assert.equal(done.searchText, fresh.searchText);
+  assert.deepEqual(done.usage, fresh.usage);
+  assert.equal(done.usage.days[0].output, 5);
 });
 test('Manual project sorting survives alphabetical mode and appends new projects without losing saved order', () => {
   const groups = groupProjects([{ project: 'Zulu', cwd: '/z' }, { project: 'Alpha', cwd: '/a' }, { project: 'Beta', cwd: '/b' }]);

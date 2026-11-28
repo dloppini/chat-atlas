@@ -8,6 +8,7 @@ document.body.dataset.theme = theme;
 let data = { sessions: [], topics: [], sources: [], errors: [], projectCatalog: [], subfolders: {}, busy: true };
 let view = 'timeline', project = saved.project || '', provider = saved.provider || 'all', query = saved.query || '', showDone = saved.showDone || false, selected = saved.selected || '';
 let cardSort = saved.cardSort === 'updated' ? 'updated' : 'created';
+const RECENT_MS = 2 * 60 * 60 * 1000;
 const sortTime = s => cardSort === 'updated' ? s.updatedAt || s.createdAt : s.createdAt;
 let subfolderFilter = typeof saved.subfolderFilter === 'string' ? saved.subfolderFilter : null;
 let gitOperation = null, gitOperationId = 0, gitOperationNotice = '';
@@ -1152,6 +1153,8 @@ function card(s) {
   pick.dataset.action = 'batch'; pick.setAttribute('aria-label', `Select ${s.title}`);
   pick.addEventListener('change', () => { if (pick.checked) batchSelection.add(s.key); else batchSelection.delete(s.key); render(); });
   c.classList.toggle('batch-selected', batchSelection.has(s.key));
+  // A light tint marks chats with activity in the last two hours; the card's "Active …" time states it in text.
+  c.classList.toggle('recent', Date.now() - (s.updatedAt || s.createdAt) <= RECENT_MS);
   meta.append(el('span', `provider-icon ${s.provider}`, s.provider === 'codex' ? 'C' : '✳'), el('span', '', providerName(s.provider)));
   const time = el('time', 'card-created', shortDate(s.createdAt)); time.dateTime = new Date(s.createdAt).toISOString();
   const updatedAt = s.updatedAt || s.createdAt, updated = el('time', 'card-updated', `Active ${activityAge(updatedAt)}`); updated.dateTime = new Date(updatedAt).toISOString();
@@ -1598,6 +1601,9 @@ window.addEventListener('message', e => {
       showSubfolders = m.sidebarPreferences.showSubfolders === true;
       sidebarPreferencesLoaded = true; persist();
     }
+    // The host omits search text it already sent; keep this board's copy.
+    const searchText = new Map((data.sessions || []).map(s => [s.key, s.searchText]));
+    for (const s of m.sessions || []) if (!('searchText' in s)) s.searchText = searchText.get(s.key) || '';
     data = m; render();
   }
   if (m.type === 'gitOperation' && gitOperation && m.projectKey === gitOperation.projectKey && m.requestId === gitOperation.requestId) {
