@@ -290,6 +290,23 @@ test('Status codes summarize a repository for the sidebar dots and skip non-repo
   assert.deepEqual((await readGitStatusCodes(root)).sort(), [' D',' M','??','??','??']);
 });
 
+test('Current branch names the checked-out branch, a detached commit, or nothing outside a repository', async t => {
+  const { readCurrentBranch } = require('../src/git');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-branch-'));
+  const ceiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = path.dirname(root);
+  t.after(() => { if (ceiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = ceiling; return fs.rm(root, {recursive:true, force:true}); });
+  assert.equal(await readCurrentBranch(root), '');
+  const git = (...args) => execFileSync('git', args, {cwd:root, stdio:'pipe'}).toString().trim();
+  git('init','-b','main');
+  await fs.writeFile(path.join(root, 'a.txt'), 'x\n');
+  git('add','.'); git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Base');
+  git('checkout','-b','feature/sidebar');
+  assert.equal(await readCurrentBranch(root), 'feature/sidebar');
+  git('checkout','--detach');
+  assert.equal(await readCurrentBranch(root), `detached ${git('rev-parse','--short','HEAD')}`);
+});
+
 test('Behind main counts remote main commits missing from HEAD on main and feature branches', async t => {
   const { readBehindMain } = require('../src/git');
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'atlas-behind-'));

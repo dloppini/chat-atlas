@@ -269,6 +269,13 @@ async function readGitStatusCodes(cwd) {
   const status = await readOnlyGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all']).catch(() => null);
   return status === null ? null : parseGitChanges(status).map(change => change.code);
 }
+// Checked-out branch for the sidebar: its short name, or `detached <short hash>`; '' without a commit or repository.
+async function readCurrentBranch(cwd) {
+  const branch = await readOnlyGit(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '');
+  if (branch.trim()) return branch.trim();
+  const head = await readOnlyGit(cwd, ['rev-parse', '--short', 'HEAD']).catch(() => '');
+  return head.trim() ? `detached ${head.trim()}` : '';
+}
 // Commits on the remote main branch (origin/HEAD, else main or master) that HEAD lacks. Fetching only updates remote-tracking refs. null without a remote main.
 async function readBehindMain(cwd, fetch) {
   try {
@@ -286,4 +293,4 @@ async function readBehindMain(cwd, fetch) {
     return { base, behind: Number(count.trim()), hash: hash.trim() };
   } catch { return null; }
 }
-module.exports = { readGitDashboard, readGitDiff, runGitOperation, azureRepositoryUrl, readEngineeringGit, readOnlyGit, readGitStatusCodes, readBehindMain };
+module.exports = { readGitDashboard, readGitDiff, runGitOperation, azureRepositoryUrl, readEngineeringGit, readOnlyGit, readGitStatusCodes, readCurrentBranch, readBehindMain };

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.59 - 28 November 2026
+
+- Use less CPU while agents work: changes to subagent transcripts no longer trigger a full board rescan and a Git status round for every linked project. Chat Atlas now checks a transcript once, and skips it from then on if it isn't a chat.
+- Run Git only for a visible board: the sidebar change counts and the behind-main check pause while the board is hidden and refresh as soon as you show it again.
+- See the checked-out branch under each project in the sidebar, or `detached` with the short commit hash.
+- Open cross-project Claude tabs with Claude Code 2.1.332.
+
 ## 0.1.58 - 28 November 2026
 
 - Count uncommitted work at a glance: the project sidebar shows how many files are new, modified and deleted next to each colored dot, matching the Git view.

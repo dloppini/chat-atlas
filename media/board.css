@@ -690,6 +690,9 @@ body.vscode-light:not([data-theme=dark]),body[data-theme=pearl]{--git-new:#1f8a3
 /* Each count follows its colored dot; the number stays in muted text so it reads at 10px in every theme. Behind-main uses a drawn down arrow. */
 .project-git-dots{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;color:var(--muted);font-size:10px;line-height:1;font-variant-numeric:tabular-nums}
 .git-count{display:inline-flex;align-items:center;gap:3px}
+.nav .project-branch{display:flex;align-items:center;gap:4px;min-width:0;margin:3px 0 0;color:var(--muted);font-size:10px;line-height:1.2}
+.project-branch::before{content:'';flex-shrink:0;width:9px;height:10px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 10'%3E%3Cg fill='none' stroke='black' stroke-width='1.2'%3E%3Ccircle cx='2' cy='2' r='1.2'/%3E%3Ccircle cx='2' cy='8' r='1.2'/%3E%3Ccircle cx='7' cy='3' r='1.2'/%3E%3Cpath d='M2 3.2v3.6M7 4.2c0 2-5 1.4-5 2.6'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 10'%3E%3Cg fill='none' stroke='black' stroke-width='1.2'%3E%3Ccircle cx='2' cy='2' r='1.2'/%3E%3Ccircle cx='2' cy='8' r='1.2'/%3E%3Ccircle cx='7' cy='3' r='1.2'/%3E%3Cpath d='M2 3.2v3.6M7 4.2c0 2-5 1.4-5 2.6'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat}
+.project-branch-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A hairline between pairs ties each number to the dot before it, not the one after. */
 .git-count+.git-count{border-left:1px solid var(--line);padding-left:4px}
 .git-count::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--git-modified)}

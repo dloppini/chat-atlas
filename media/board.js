@@ -28,7 +28,7 @@ const gitCollapsed = new Set(Array.isArray(saved.gitCollapsed) ? saved.gitCollap
 const gitBranchFocus = saved.gitBranchFocus && typeof saved.gitBranchFocus === 'object' && !Array.isArray(saved.gitBranchFocus) ? saved.gitBranchFocus : {};
 let gitFocusPending = false;
 let gitOpen = false, gitProject = '', gitRequestId = 0, gitResult = null;
-let gitSummary = {}, gitBehind = {};
+let gitSummary = {}, gitBehind = {}, gitBranches = {};
 let engineeringOpen = saved.engineeringOpen === true, engineeringProject = '', engineeringRequestId = 0;
 let usageOpen = saved.usageOpen === true, usageRange = [7, 30, 0].includes(saved.usageRange) ? saved.usageRange : 30;
 let engineeringView = ['architecture', 'quality', 'impact'].includes(saved.engineeringView) ? saved.engineeringView : 'overview';
@@ -1123,6 +1123,16 @@ function syncProjectGit() {
     const behind = gitBehind[row.dataset.project];
     const parts = kinds.map(([letter, kind]) => `${counts[letter]} ${kind}`);
     const status = [parts.length ? `Uncommitted: ${parts.join(', ')}` : '', behind ? `${behind.count} ${behind.count === 1 ? 'commit' : 'commits'} behind ${behind.base}` : ''].filter(Boolean).join('. ');
+    const branch = typeof gitBranches[row.dataset.project] === 'string' ? gitBranches[row.dataset.project] : '';
+    if (row.dataset.branch !== branch) {
+      row.dataset.branch = branch; row.querySelector('.project-branch')?.remove();
+      if (branch) {
+        const line = el('span', 'project-branch'); line.title = `Checked out: ${branch}`;
+        line.append(el('span', 'project-branch-name', branch));
+        row.querySelector('.project-name-row').after(line);
+      }
+      const nav = row.querySelector('.nav'); nav.setAttribute('aria-label', nav.dataset.projectLabel + (branch ? `, branch ${branch}` : ''));
+    }
     let dots = row.querySelector('.project-git-dots');
     if (row.dataset.git === status) continue;
     row.dataset.git = status; dots?.remove();
@@ -1571,7 +1581,7 @@ window.addEventListener('message', e => {
     syncProjectRunning(); renderSummary();
     return;
   }
-  if (m.type === 'gitSummary' && m.summary && typeof m.summary === 'object') { gitSummary = m.summary; gitBehind = m.behind && typeof m.behind === 'object' ? m.behind : {}; syncProjectGit(); return; }
+  if (m.type === 'gitSummary' && m.summary && typeof m.summary === 'object') { gitSummary = m.summary; gitBehind = m.behind && typeof m.behind === 'object' ? m.behind : {}; gitBranches = m.branches && typeof m.branches === 'object' ? m.branches : {}; syncProjectGit(); return; }
   if (m.type === 'theme' && ['system', 'pearl', 'dark'].includes(m.theme)) {
     themeMigrated = true;
     theme = m.theme;
@@ -1611,7 +1621,7 @@ window.addEventListener('message', e => {
     // Live refreshes only touch the DOM when the repository actually changed.
     if (live && gitResult && JSON.stringify(gitResult.dashboard) === JSON.stringify(m.dashboard) && gitResult.error === m.error) return;
     gitResult = m; renderGit();
-    if (m.dashboard) { gitSummary = { ...gitSummary, [m.projectKey]: m.dashboard.changes.map(change => change.code) }; syncProjectGit(); }
+    if (m.dashboard) { gitSummary = { ...gitSummary, [m.projectKey]: m.dashboard.changes.map(change => change.code) }; if (typeof m.dashboard.branch === 'string') gitBranches = { ...gitBranches, [m.projectKey]: m.dashboard.branch === 'Detached HEAD' ? `detached ${m.dashboard.head?.slice(0, 7) || ''}`.trim() : m.dashboard.branch }; syncProjectGit(); }
     if (live && !m.error && gitDiffResult && gitSelection.mode !== 'commit') {
       // A file that was committed or reverted meanwhile falls back to the first remaining change.
       if (gitSelection.file && !m.dashboard.changes.some(change => change.file === gitSelection.file)) { const { file, ...rest } = gitSelection; gitSelection = rest; }

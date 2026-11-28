@@ -49,7 +49,7 @@ Stage or unstage the selected file from its diff toolbar, or use **Stage all / U
 
 For Azure DevOps Services repositories, **Create PR** opens the Azure PR creation form with the source branch selected. Push the branch first, then choose the target, title, description and reviewers in your authenticated browser and submit there. Azure HTTPS and SSH remotes are supported; choose the **PR remote** when more than one remote is configured. Self-hosted Azure DevOps Server is not detected.
 
-Cross-project Claude tabs require verified Windows Claude Code bundles 2.1.323 and 2.1.325 through 2.1.330. Atlas opens these tabs beside the board and reuses the side group. A temporary directory bridge leaves installed Claude files and project settings unchanged. Unknown builds are rejected pending compatibility validation. Native tab restoration after a VS Code restart is not covered; retrieve saved chats through Atlas.
+Cross-project Claude tabs require verified Windows Claude Code bundles 2.1.323 and 2.1.325 through 2.1.330, and 2.1.332. Atlas opens these tabs beside the board and reuses the side group. A temporary directory bridge leaves installed Claude files and project settings unchanged. Unknown builds are rejected pending compatibility validation. Native tab restoration after a VS Code restart is not covered; retrieve saved chats through Atlas.
 
 ## Local data
 

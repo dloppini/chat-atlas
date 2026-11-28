@@ -117,14 +117,25 @@ test('Installed Claude panel directory code works with the bridge', {
   f.extension.packageJSON = JSON.parse(fs.readFileSync(path.join(extensionPath, 'package.json'), 'utf8'));
   f.setHash(require('node:crypto').createHash('sha256').update(source).digest('hex'));
   // Preserve the installed call chain and stack frame while allowing minified names to vary.
-  const setup = source.match(/setupPanel\(e,t,n,r,o,s=!1\)\{this\.panelFullEditor\.set\(e,!!r\);let i=([\w$]+)\.workspace\.workspaceFolders\?\.map\(\(\w+\)=>\w+\.uri\.fsPath\)\|\|\[\],a=([\w$]+)\(i\)/);
+  // 2.1.332 reads folders through a file/remote-scheme filter helper instead of workspaceFolders directly.
+  const setup = source.match(/setupPanel\(e,t,n,r,o,s=!1\)\{this\.panelFullEditor\.set\(e,!!r\);let (?:[\w$]+=[^,;]*,)?([\w$]+)=(?:([\w$]+)\.workspace\.workspaceFolders\?\.map\(\(\w+\)=>\w+\.uri\.fsPath\)\|\|\[\]|([\w$]+)\(\)\.map\(\((\w+)\)=>\4\.uri\.fsPath\)),([\w$]+)=([\w$]+)\(\1\)/);
   assert.ok(setup, 'Installed panel directory construction changed');
-  const directory = source.slice(source.indexOf(`function ${setup[2]}(e){`)).match(/^function [\w$]+\(e\)\{return ([\w$]+)\(e\[0\]\|\|([\w$]+)\.homedir\(\)\)\}/);
+  const context = {};
+  let folders = '';
+  if (setup[3]) {
+    const list = source.slice(source.indexOf(`function ${setup[3]}(){`)).match(/^function [\w$]+\(\)\{return\(([\w$]+)\.workspace\.workspaceFolders\?\?\[\]\)\.filter\(([\w$]+)\)\}/);
+    assert.ok(list, 'Installed workspace folder helper changed');
+    const filter = source.slice(source.indexOf(`function ${list[2]}(e){`)).match(/^function [\w$]+\(e\)\{return e\.uri\.scheme==="file"\|\|e\.uri\.scheme==="vscode-remote"&&([\w$]+)\.env\.remoteName!==void 0\}/);
+    assert.ok(filter && filter[1] === list[1], 'Installed workspace folder filter changed');
+    folders = `${list[0]};${filter[0]};`;
+    context[list[1]] = f.vscode;
+  } else context[setup[2]] = f.vscode;
+  const directory = source.slice(source.indexOf(`function ${setup[6]}(e){`)).match(/^function [\w$]+\(e\)\{return ([\w$]+)\(e\[0\]\|\|([\w$]+)\.homedir\(\)\)\}/);
   assert.ok(directory, 'Installed workspace directory helper changed');
   const canonical = source.slice(source.indexOf(`function ${directory[1]}(e){`)).match(/^function [\w$]+\(e\)\{let t=e;try\{t=([\w$]+)\.realpathSync\(e\)\}catch\{\}return process\.platform==="darwin"\?t\.normalize\("NFC"\):t\}/);
   assert.ok(canonical, 'Installed realpath helper changed');
-  const panel = vm.runInNewContext(`${canonical[0]};${directory[0]};({${setup[0]};return a;}})`, {
-    [canonical[1]]: f.fakeFs, process, [directory[2]]: require('node:os'), [setup[1]]: f.vscode
+  const panel = vm.runInNewContext(`${canonical[0]};${directory[0]};${folders}({${setup[0]};return ${setup[5]};}})`, {
+    ...context, [canonical[1]]: f.fakeFs, process, [directory[2]]: require('node:os')
   }, { filename });
   f.vscode.commands.executeCommand = async () => {
     assert.equal(panel.setupPanel.call({ panelFullEditor: new Map() }, {}), f.target);

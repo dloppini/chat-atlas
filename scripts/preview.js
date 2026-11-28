@@ -84,7 +84,7 @@ window.atlasPreview={getState:()=>JSON.parse(localStorage.getItem('atlasDemoUi')
     localStorage.setItem('atlasDemoData',JSON.stringify(board));
     setTimeout(()=>{window.postMessage({...board,sidebarPreferences});if(createdKey)window.postMessage({type:'projectCreated',key:createdKey});if(linkedKey)window.postMessage({type:'projectFolderLinked',previousKey:m.projectKey,key:linkedKey});},10);
   }
-  if(m.type==='ready'||m.type==='refresh')setTimeout(()=>window.postMessage({type:'gitSummary',summary:{'path:c:/code/race studio':['??',' M',' D'],'path:c:/code/suspension lab':[' M']},behind:{'path:c:/code/race studio':{count:3,base:'origin/main',hash:'a1',name:'Race Studio'}}}),20);
+  if(m.type==='ready'||m.type==='refresh')setTimeout(()=>window.postMessage({type:'gitSummary',summary:{'path:c:/code/race studio':['??',' M',' D'],'path:c:/code/suspension lab':[' M']},behind:{'path:c:/code/race studio':{count:3,base:'origin/main',hash:'a1',name:'Race Studio'}},branches:{'path:c:/code/race studio':'feature/telemetry-overlay-with-a-long-name','path:c:/code/suspension lab':'main'}}),20);
 }};`;
 const server = http.createServer(async (req, res) => {
   try {

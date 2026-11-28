@@ -6,7 +6,7 @@ const { configureExplorerMenu } = require('./explorer-menu');
 const { watch } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { readGitDashboard, readGitDiff, runGitOperation, readOnlyGit, readGitStatusCodes, readBehindMain } = require('./git');
+const { readGitDashboard, readGitDiff, runGitOperation, readOnlyGit, readGitStatusCodes, readCurrentBranch, readBehindMain } = require('./git');
 const { createEngineering } = require('./engineering');
 const crypto = require('node:crypto');
 const { SessionIndex, reconcile, publicSessions, UUID, passages, searchPatterns, lastMatch, fileMatch } = require('./core');
@@ -164,17 +164,21 @@ function activate(context) {
     announced = next;
   }
   let gitSummaryTask;
-  const fetchedAt = new Map(), announcedBehind = new Map();
+  const fetchedAt = new Map(), announcedBehind = new Map(), unindexedFiles = new Set(), discoveryFiles = new Set();
   function publishGitSummary() {
+    // Only the visible board shows the summary; becoming visible triggers a refresh that runs it.
+    if (!panel?.visible) return;
     // One status per linked project, four at a time, after each full scan; the remote main is fetched at most every 10 minutes per project.
     gitSummaryTask ||= (async () => {
-      const projects = catalog().filter(item => item.cwd), summary = {}, behind = {};
+      const projects = catalog().filter(item => item.cwd), summary = {}, behind = {}, branches = {};
       const check = vscode.workspace.getConfiguration('chatAtlas').get('checkBehindMain', true);
       for (let i = 0; i < projects.length; i += 4) {
         await Promise.all(projects.slice(i, i + 4).map(async item => {
           const codes = await readGitStatusCodes(item.cwd);
           if (!codes) return;
           summary[item.key] = codes;
+          const branch = await readCurrentBranch(item.cwd);
+          if (branch) branches[item.key] = branch;
           const fetch = check && Date.now() - (fetchedAt.get(item.cwd) || 0) > 600000;
           if (fetch) fetchedAt.set(item.cwd, Date.now());
           const main = await readBehindMain(item.cwd, fetch);
@@ -182,7 +186,7 @@ function activate(context) {
         }));
         if (disposed) return;
       }
-      post({ type: 'gitSummary', summary, behind });
+      post({ type: 'gitSummary', summary, behind, branches });
       if (check) announceBehind(behind);
     })().finally(() => { gitSummaryTask = undefined; });
   }
@@ -236,7 +240,9 @@ function activate(context) {
         const watcher = watch(root, { recursive: true }, (_event, filename) => {
           if (!monitoring() || (filename && !filename.toString().endsWith('.jsonl'))) return;
           const file = filename ? path.join(root, filename.toString()) : '';
-          const known = file && current.sessions.some(s => s.file === file);
+          // Subagent and other unindexable logs never become sessions, so they would otherwise force a full scan (and a Git round) on every write.
+          const known = file && (unindexedFiles.has(file) || current.sessions.some(s => s.file === file));
+          if (!known && file) discoveryFiles.add(file);
           discoveryPending ||= !known;
           if (activityWakeTimer) return;
           activityWakeTimer = setTimeout(() => {
@@ -315,7 +321,8 @@ function activate(context) {
   }
   async function scan() {
     busy = true; publish();
-    try { current = await index.scan(settings()); const sessions = locatedSessions(); subfolders = await scanSubfolders(sessions); reconcile(sessions, state); await save(); }
+    const checked = [...discoveryFiles]; discoveryFiles.clear();
+    try { current = await index.scan(settings()); for (const file of checked) if (!current.sessions.some(s => s.file === file)) unindexedFiles.add(file); const sessions = locatedSessions(); subfolders = await scanSubfolders(sessions); reconcile(sessions, state); await save(); }
     catch (e) { current.errors = [`Refresh failed: ${e.message}`]; }
     finally { busy = false; if (!disposed) { publish(); if (panel) watchHistory(); publishGitSummary(); } }
   }
